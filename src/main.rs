@@ -11,9 +11,9 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::process::Command;
+use std::env;
 
 fn get_git_info() -> String {
     let branch = Command::new("git")
@@ -30,6 +30,8 @@ fn get_git_info() -> String {
 
     format!("{} ({})", branch, commit)
 }
+
+use crate::ui::AppView;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -57,18 +59,34 @@ jobs:
             default.to_string()
         });
 
-    let pipeline = Pipeline::from_yaml(&pipeline_content)?;
+    let mut pipeline = Pipeline::from_yaml(&pipeline_content)?;
+    
+    // Check for command line repo argument
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        pipeline.repository = Some(args[1].clone());
+        if args.len() > 2 {
+            pipeline.branch = Some(args[2].clone());
+        }
+    }
+
     let pipeline_name = pipeline.name.clone();
-    let git_info = get_git_info();
+    let git_info = if pipeline.repository.is_some() {
+        format!("Remote: {}", pipeline.repository.as_ref().unwrap())
+    } else {
+        get_git_info()
+    };
+
+    // Keep a copy for UI
+    let pipeline_config = pipeline.clone();
 
     // 2. Initialize runner
-    let runner = Arc::new(Runner::new(pipeline));
+    let runner = Runner::new(pipeline);
     let runner_states = runner.states.clone();
 
     // 3. Start runner in background
-    let runner_clone = runner.clone();
     let _runner_handle = tokio::spawn(async move {
-        runner_clone.run().await;
+        runner.run().await;
     });
 
     // 4. Set up TUI
@@ -80,6 +98,7 @@ jobs:
 
     // 5. Run TUI event loop
     let mut selected_job = 0;
+    let mut current_view = AppView::Dashboard;
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
 
@@ -89,7 +108,7 @@ jobs:
             s.clone()
         };
 
-        terminal.draw(|f| ui::draw(f, &states, selected_job, &git_info, &pipeline_name))?;
+        terminal.draw(|f| ui::draw(f, &states, selected_job, &git_info, &pipeline_name, &current_view, &pipeline_config))?;
 
         let timeout = tick_rate
             .checked_sub(last_tick.elapsed())
@@ -99,6 +118,8 @@ jobs:
             if let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') => break,
+                    KeyCode::Char('1') => current_view = AppView::Dashboard,
+                    KeyCode::Char('2') => current_view = AppView::Settings,
                     KeyCode::Up => {
                         if selected_job > 0 {
                             selected_job -= 1;
