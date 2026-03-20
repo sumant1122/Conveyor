@@ -137,13 +137,29 @@ impl Runner {
         {
             let mut states = self.states.lock().await;
             states[0].status = JobStatus::Running;
-            states[0].logs.push(format!("Cloning {} (branch: {})...", repo, branch));
+            states[0].logs.push(format!("Preparing workspace for {}...", repo));
+        }
+
+        // If repo is a local path that exists, just use it
+        let repo_path = std::path::Path::new(repo);
+        if repo_path.exists() && repo_path.is_dir() {
+            let mut states = self.states.lock().await;
+            states[0].logs.push(format!("Using local directory: {}", repo));
+            states[0].status = JobStatus::Success;
+            self.workspace = Some(repo_path.to_path_buf());
+            return true;
         }
 
         let workspace_path = PathBuf::from("target/workspace");
         if workspace_path.exists() {
-            let _ = tokio::fs::remove_dir_all(&workspace_path).await;
+            if let Err(e) = tokio::fs::remove_dir_all(&workspace_path).await {
+                let mut states = self.states.lock().await;
+                states[0].logs.push(format!("Warning: Could not clear workspace: {}. Try closing open files in target/workspace.", e));
+            }
         }
+        
+        // Ensure target directory exists
+        let _ = tokio::fs::create_dir_all("target").await;
 
         let mut child = match Command::new("git")
             .args(["clone", "--depth", "1", "--branch", branch, repo, "target/workspace"])
@@ -153,7 +169,7 @@ impl Runner {
                 Ok(c) => c,
                 Err(e) => {
                     let mut states = self.states.lock().await;
-                    states[0].logs.push(format!("Failed to spawn git clone: {}", e));
+                    states[0].logs.push(format!("Failed to start git clone: {}. Is git installed?", e));
                     states[0].status = JobStatus::Failed;
                     return false;
                 }
