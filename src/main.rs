@@ -90,6 +90,7 @@ jobs:
     // 2. Initialize runner
     let runner = Runner::new(pipeline, user_env);
     let runner_states = runner.states.clone();
+    let runner_pipeline = runner.pipeline.clone();
 
     // 3. Start runner in background
     let _runner_handle = tokio::spawn(async move {
@@ -108,14 +109,31 @@ jobs:
     let mut current_view = AppView::Dashboard;
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
+    
+    let mut current_git_info = git_info;
 
     loop {
-        let states = {
+        let (states, pipeline_config) = {
             let s = runner_states.lock().await;
-            s.clone()
+            let p = runner_pipeline.lock().await;
+            (s.clone(), p.clone())
         };
 
-        terminal.draw(|f| ui::draw(f, &states, selected_job, &git_info, &pipeline_name, &current_view, &pipeline_config, &user_env_ui))?;
+        // Update git info if we are not in remote mode (to reflect potential workspace changes)
+        if pipeline_config.repository.is_none() && last_tick.elapsed() >= Duration::from_secs(5) {
+             current_git_info = get_git_info();
+        }
+
+        terminal.draw(|f| ui::draw(
+            f, 
+            &states, 
+            selected_job, 
+            &current_git_info, 
+            &pipeline_config.name, 
+            &current_view, 
+            &pipeline_config, 
+            &user_env_ui
+        ))?;
 
         let timeout = tick_rate
             .checked_sub(last_tick.elapsed())

@@ -24,7 +24,7 @@ pub struct JobState {
 }
 
 pub struct Runner {
-    pub pipeline: Pipeline,
+    pub pipeline: Arc<Mutex<Pipeline>>,
     pub states: Arc<Mutex<Vec<JobState>>>,
     pub workspace: Option<PathBuf>,
     pub user_env: std::collections::HashMap<String, String>,
@@ -52,7 +52,7 @@ impl Runner {
         }
 
         Self {
-            pipeline,
+            pipeline: Arc::new(Mutex::new(pipeline)),
             states: Arc::new(Mutex::new(states)),
             workspace: None,
             user_env,
@@ -61,11 +61,15 @@ impl Runner {
 
     pub async fn run(mut self) {
         // 1. Prepare Workspace
-        let repo_opt = self.pipeline.repository.clone();
+        let (repo_opt, branch_opt, on_failure_opt) = {
+            let p = self.pipeline.lock().await;
+            (p.repository.clone(), p.branch.clone(), p.on_failure.clone())
+        };
+
         if let Some(repo) = repo_opt {
-            let branch = self.pipeline.branch.clone().unwrap_or_else(|| "main".to_string());
+            let branch = branch_opt.unwrap_or_else(|| "main".to_string());
             if !self.clone_workspace(&repo, &branch).await {
-                let _ = self.run_hook(&self.pipeline.on_failure).await;
+                let _ = self.run_hook(&on_failure_opt).await;
                 return;
             }
             
@@ -75,10 +79,11 @@ impl Runner {
                 if yaml_path.exists() {
                     if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
                         if let Ok(mut new_pipeline) = Pipeline::from_yaml(&content) {
+                            let mut p = self.pipeline.lock().await;
                             // Preserve repo/branch info
-                            new_pipeline.repository = self.pipeline.repository.clone();
-                            new_pipeline.branch = self.pipeline.branch.clone();
-                            self.pipeline = new_pipeline;
+                            new_pipeline.repository = p.repository.clone();
+                            new_pipeline.branch = p.branch.clone();
+                            *p = new_pipeline;
                             
                             // Re-initialize states with the new jobs
                             let mut states = self.states.lock().await;
@@ -87,7 +92,7 @@ impl Runner {
                             states.clear();
                             states.push(clone_state);
                             
-                            for j in &self.pipeline.jobs {
+                            for j in &p.jobs {
                                 states.push(JobState {
                                     name: j.name.clone(),
                                     status: JobStatus::Pending,
@@ -100,9 +105,13 @@ impl Runner {
             }
         }
 
-        let total_jobs = self.pipeline.jobs.len();
+        let (total_jobs, has_repo) = {
+            let p = self.pipeline.lock().await;
+            (p.jobs.len(), p.repository.is_some())
+        };
+        
         let mut completed_jobs = HashSet::new();
-        if self.pipeline.repository.is_some() {
+        if has_repo {
             completed_jobs.insert("Clone Workspace".to_string());
         }
         let mut running_jobs = HashSet::new();
@@ -110,22 +119,25 @@ impl Runner {
         let arc_self = Arc::new(self);
 
         // 2. Run Jobs
-        while completed_jobs.len() < (total_jobs + if arc_self.pipeline.repository.is_some() { 1 } else { 0 }) {
+        while completed_jobs.len() < (total_jobs + if has_repo { 1 } else { 0 }) {
             let mut launched_any = false;
 
-            let jobs_to_run: Vec<(usize, Job)> = arc_self.pipeline.jobs.iter().enumerate()
-                .filter(|(_i, j)| {
-                    if running_jobs.contains(&j.name) || completed_jobs.contains(&j.name) {
-                        return false;
-                    }
-                    if let Some(needs) = &j.needs {
-                        needs.iter().all(|n| completed_jobs.contains(n))
-                    } else {
-                        true
-                    }
-                })
-                .map(|(i, j)| (i + if arc_self.pipeline.repository.is_some() { 1 } else { 0 }, j.clone()))
-                .collect();
+            let jobs_to_run: Vec<(usize, Job)> = {
+                let p = arc_self.pipeline.lock().await;
+                p.jobs.iter().enumerate()
+                    .filter(|(_i, j)| {
+                        if running_jobs.contains(&j.name) || completed_jobs.contains(&j.name) {
+                            return false;
+                        }
+                        if let Some(needs) = &j.needs {
+                            needs.iter().all(|n| completed_jobs.contains(n))
+                        } else {
+                            true
+                        }
+                    })
+                    .map(|(i, j)| (i + if has_repo { 1 } else { 0 }, j.clone()))
+                    .collect()
+            };
 
             for (index, job) in jobs_to_run {
                 running_jobs.insert(job.name.clone());
@@ -153,15 +165,16 @@ impl Runner {
         }
 
         // 3. Post-pipeline hooks
-        let all_success = {
+        let (all_success, on_success_opt, on_failure_opt) = {
             let states = arc_self.states.lock().await;
-            states.iter().all(|s| s.status == JobStatus::Success)
+            let p = arc_self.pipeline.lock().await;
+            (states.iter().all(|s| s.status == JobStatus::Success), p.on_success.clone(), p.on_failure.clone())
         };
 
         if all_success {
-            let _ = arc_self.run_hook(&arc_self.pipeline.on_success).await;
+            let _ = arc_self.run_hook(&on_success_opt).await;
         } else {
-            let _ = arc_self.run_hook(&arc_self.pipeline.on_failure).await;
+            let _ = arc_self.run_hook(&on_failure_opt).await;
         }
     }
 
@@ -294,7 +307,10 @@ impl Runner {
             cmd.current_dir(ws);
         }
 
-        if let Some(env) = &self.pipeline.env { cmd.envs(env); }
+        {
+            let p = self.pipeline.lock().await;
+            if let Some(env) = &p.env { cmd.envs(env); }
+        }
         if let Some(env) = &job.env { cmd.envs(env); }
         cmd.envs(&self.user_env);
 
