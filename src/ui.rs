@@ -77,6 +77,22 @@ pub fn draw(
     }
 }
 
+fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
+    let total = states.len();
+    let success = states.iter().filter(|s| s.status == JobStatus::Success).count();
+    let failed = states.iter().filter(|s| s.status == JobStatus::Failed).count();
+    let running = states.iter().filter(|s| s.status == JobStatus::Running).count();
+
+    let text = format!(
+        " [q] Quit | [1-3] Views | [Up/Down] Job | [PgUp/PgDn/Home/End] Scroll Logs | Status: {} Total, {} OK, {} Fail, {} Run ",
+        total, success, failed, running
+    );
+    
+    let footer = Paragraph::new(text)
+        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+    frame.render_widget(footer, area);
+}
+
 fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &str, current_view: &AppView) {
     // FLEXIBLE HEADER: Don't use fixed percentages that crush text
     let header_chunks = Layout::default()
