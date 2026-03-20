@@ -122,6 +122,7 @@ impl Runner {
         while completed_jobs.len() < (total_jobs + if has_repo { 1 } else { 0 }) {
             let mut launched_any = false;
 
+            // Get jobs that ARE NOT running, NOT completed, and have their NEEDS met
             let jobs_to_run: Vec<(usize, Job)> = {
                 let p = arc_self.pipeline.lock().await;
                 p.jobs.iter().enumerate()
@@ -132,7 +133,10 @@ impl Runner {
                         if let Some(needs) = &j.needs {
                             needs.iter().all(|n| completed_jobs.contains(n))
                         } else {
-                            true
+                            // SEQUENTIAL ENFORCEMENT: 
+                            // If no needs are specified, only run if NO other jobs are currently running.
+                            // This ensures they run one by one.
+                            running_jobs.is_empty()
                         }
                     })
                     .map(|(i, j)| (i + if has_repo { 1 } else { 0 }, j.clone()))
@@ -146,6 +150,9 @@ impl Runner {
                 tokio::spawn(async move {
                     self_clone.run_job(index, job).await;
                 });
+                
+                // If we are enforcing sequential (no needs specified), break after launching ONE
+                break; 
             }
 
             if !launched_any && running_jobs.is_empty() {
