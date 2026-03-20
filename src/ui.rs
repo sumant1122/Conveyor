@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap, Table, Row, Tabs, BorderType},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap, Table, Row, Tabs, Cell},
     Frame,
 };
 use crate::runner::{JobState, JobStatus};
@@ -25,7 +25,7 @@ impl AppView {
     }
 
     pub fn titles() -> Vec<&'static str> {
-        vec!["[1] Dashboard", "[2] Pipeline Config", "[3] Env Variables"]
+        vec!["1:Dashboard", "2:Config", "3:EnvVars"]
     }
 }
 
@@ -43,7 +43,7 @@ pub fn draw(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Header/Tabs
+            Constraint::Length(3), // Header
             Constraint::Min(0),    // Content
             Constraint::Length(1), // Footer
         ])
@@ -63,17 +63,17 @@ pub fn draw(
 fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &str, current_view: &AppView) {
     let header_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .constraints([Constraint::Min(40), Constraint::Length(40)])
         .split(area);
 
     let tabs = Tabs::new(AppView::titles())
-        .block(Block::default().borders(Borders::ALL).title(format!(" Conveyor: {} ", pipeline_name)).border_type(BorderType::Rounded))
+        .block(Block::default().borders(Borders::ALL).title(format!(" Conveyor: {} ", pipeline_name)))
         .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
         .select(current_view.to_index());
     frame.render_widget(tabs, header_chunks[0]);
 
     let git_p = Paragraph::new(format!(" {} ", git_info))
-        .block(Block::default().borders(Borders::ALL).title(" Git context ").border_type(BorderType::Rounded))
+        .block(Block::default().borders(Borders::ALL).title(" Git "))
         .style(Style::default().fg(Color::Cyan));
     frame.render_widget(git_p, header_chunks[1]);
 }
@@ -85,50 +85,41 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
     let running = states.iter().filter(|s| s.status == JobStatus::Running).count();
 
     let text = format!(
-        " [q] Quit | [↑/↓] Job | [PgUp/PgDn/Home/End] Scroll Logs | Status: {} Total, {} Success, {} Failed, {} Running ",
+        " q:Quit | Arrows:Job | PgUp/Dn:Scroll | Stats: {}T, {}S, {}F, {}R ",
         total, success, failed, running
     );
     
     let footer = Paragraph::new(text)
-        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+        .style(Style::default().bg(Color::Blue).fg(Color::White));
     frame.render_widget(footer, area);
 }
 
 fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_job: usize, log_scroll: u16) {
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .constraints([Constraint::Length(30), Constraint::Min(0)])
         .split(area);
 
-    // Job List with Timeline
+    // Job List
     let items: Vec<ListItem> = states
         .iter()
         .enumerate()
         .map(|(i, state)| {
-            let (marker, color, tag) = match state.status {
-                JobStatus::Pending => (" ○ ", Color::Gray, "WAIT"),
-                JobStatus::Running => (" ▶ ", Color::Yellow, "RUN "),
-                JobStatus::Success => (" ✔ ", Color::Green, "DONE"),
-                JobStatus::Failed => (" ✘ ", Color::Red, "FAIL"),
+            let (marker, color) = match state.status {
+                JobStatus::Pending => ("( )", Color::Gray),
+                JobStatus::Running => (">>>", Color::Yellow),
+                JobStatus::Success => ("[V]", Color::Green),
+                JobStatus::Failed => ("[X]", Color::Red),
             };
 
             let mut style = Style::default().fg(color);
-            let is_selected = i == selected_job;
-            
-            if is_selected {
-                style = style.add_modifier(Modifier::BOLD).bg(Color::Rgb(40, 44, 52));
+            if i == selected_job {
+                style = style.add_modifier(Modifier::REVERSED);
             }
 
-            let connector = if i == 0 { "  " } else { "│ " };
-            let connector_style = Style::default().fg(Color::DarkGray);
-
             let line = Line::from(vec![
-                Span::styled(connector, connector_style),
-                Span::styled("──", connector_style),
-                Span::styled(marker, style),
-                Span::styled("── ", connector_style),
-                Span::styled(format!("{:<12}", state.name), style),
-                Span::styled(format!(" [{}]", tag), style.add_modifier(Modifier::DIM)),
+                Span::styled(format!("{} ", marker), style),
+                Span::styled(state.name.clone(), style),
             ]);
 
             ListItem::new(line)
@@ -136,18 +127,13 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
         .collect();
 
     let job_list = List::new(items)
-        .block(Block::default()
-            .title(" Pipeline Timeline ")
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::DarkGray)))
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+        .block(Block::default().title(" Jobs ").borders(Borders::ALL));
     frame.render_widget(job_list, content_chunks[0]);
 
     // Logs
     let (logs, line_count) = if let Some(state) = states.get(selected_job) {
         if state.logs.is_empty() {
-            ("No logs yet...".to_string(), 0)
+            ("No logs...".to_string(), 0)
         } else {
             (state.logs.join("\n"), state.logs.len())
         }
@@ -156,13 +142,13 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
     };
 
     let title = if let Some(state) = states.get(selected_job) {
-        format!(" Logs: {} [{} lines, scroll: {}] ", state.name, line_count, log_scroll)
+        format!(" Logs: {} [L:{}, S:{}] ", state.name, line_count, log_scroll)
     } else {
         " Logs ".to_string()
     };
 
     let log_view = Paragraph::new(logs)
-        .block(Block::default().title(title).borders(Borders::ALL).border_type(BorderType::Rounded))
+        .block(Block::default().title(title).borders(Borders::ALL))
         .wrap(Wrap { trim: true })
         .scroll((log_scroll, 0));
     frame.render_widget(log_view, content_chunks[1]);
@@ -171,104 +157,39 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
 fn draw_settings(frame: &mut Frame, area: Rect, pipeline: &Pipeline) {
     let mut rows = Vec::new();
 
-    // Global Env
-    rows.push(Row::new(vec![
-        Cell::from("GLOBAL").bold().yellow(),
-        Cell::from(""),
-        Cell::from(""),
-    ]));
+    rows.push(Row::new(vec![Cell::from("GLOBAL").yellow(), Cell::from(""), Cell::from("")]));
 
     if let Some(env) = &pipeline.env {
         for (k, v) in env {
-            rows.push(Row::new(vec![
-                Cell::from(""),
-                Cell::from(k.clone()),
-                Cell::from(v.clone()).italic().dim(),
-            ]));
+            rows.push(Row::new(vec![Cell::from(""), Cell::from(k.clone()), Cell::from(v.clone()).dim()]));
         }
-    } else {
-        rows.push(Row::new(vec![
-            Cell::from(""),
-            Cell::from("None").gray(),
-            Cell::from(""),
-        ]));
     }
 
-    rows.push(Row::new(vec![Cell::from(""); 3])); // Spacer
-
-    // Job Envs
     for job in &pipeline.jobs {
-        rows.push(Row::new(vec![
-            Cell::from(format!("JOB: {}", job.name)).bold().yellow(),
-            Cell::from(""),
-            Cell::from(""),
-        ]));
+        rows.push(Row::new(vec![Cell::from(format!("JOB:{}", job.name)).yellow(), Cell::from(""), Cell::from("")]));
         if let Some(env) = &job.env {
             for (k, v) in env {
-                rows.push(Row::new(vec![
-                    Cell::from(""),
-                    Cell::from(k.clone()),
-                    Cell::from(v.clone()).italic().dim(),
-                ]));
+                rows.push(Row::new(vec![Cell::from(""), Cell::from(k.clone()), Cell::from(v.clone()).dim()]));
             }
-        } else {
-            rows.push(Row::new(vec![
-                Cell::from(""),
-                Cell::from("None").gray(),
-                Cell::from(""),
-            ]));
         }
     }
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(30),
-            Constraint::Percentage(30),
-            Constraint::Percentage(40),
-        ],
-    )
-    .header(
-        Row::new(vec!["Scope", "Key", "Value"])
-            .style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))
-            .bottom_margin(1),
-    )
-    .block(Block::default().title(" Pipeline Configuration ").borders(Borders::ALL).border_type(BorderType::Rounded));
+    let table = Table::new(rows, [Constraint::Percentage(30), Constraint::Percentage(30), Constraint::Percentage(40)])
+        .header(Row::new(vec!["Scope", "Key", "Value"]).bold().cyan())
+        .block(Block::default().title(" Config ").borders(Borders::ALL));
 
     frame.render_widget(table, area);
 }
 
-use ratatui::widgets::Cell;
-
 fn draw_env_vars(frame: &mut Frame, area: Rect, env: &std::collections::HashMap<String, String>) {
     let mut rows = Vec::new();
     for (k, v) in env {
-        rows.push(Row::new(vec![
-            Cell::from(k.clone()).bold().cyan(),
-            Cell::from(v.clone()).italic(),
-        ]));
+        rows.push(Row::new(vec![Cell::from(k.clone()).cyan(), Cell::from(v.clone())]));
     }
 
-    if rows.is_empty() {
-        rows.push(Row::new(vec![
-            Cell::from("No environment variables found in env.yaml").gray(),
-            Cell::from(""),
-        ]));
-    }
-
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(40),
-            Constraint::Percentage(60),
-        ],
-    )
-    .header(
-        Row::new(vec!["Variable Name", "Value"])
-            .style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))
-            .bottom_margin(1),
-    )
-    .block(Block::default().title(" Local Environment (env.yaml) ").borders(Borders::ALL).border_type(BorderType::Rounded));
+    let table = Table::new(rows, [Constraint::Percentage(40), Constraint::Percentage(60)])
+        .header(Row::new(vec!["Variable", "Value"]).bold().cyan())
+        .block(Block::default().title(" Local Env ").borders(Borders::ALL));
 
     frame.render_widget(table, area);
 }
