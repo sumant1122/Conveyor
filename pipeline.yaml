@@ -1,18 +1,16 @@
 name: Conveyor Build
 env:
-  PROJECT_NAME: Conveyor
-on_failure: "echo 'Build failed!'"
-on_success: "echo 'Build successful!'"
-
+  GLOBAL_VAR: "global_value"
+  API_KEY: "secret_123"
 jobs:
   - name: Build
+    env:
+      BUILD_MODE: "release"
     steps:
       - name: Compile
         command: cargo build
   - name: Test
     needs: ["Build"]
-    env:
-      RUST_BACKTRACE: "1"
     steps:
       - name: Unit Tests
         command: cargo test

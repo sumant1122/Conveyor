@@ -4,6 +4,8 @@ use std::collections::HashMap;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Pipeline {
     pub name: String,
+    pub repository: Option<String>,
+    pub branch: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub on_success: Option<String>,
     pub on_failure: Option<String>,

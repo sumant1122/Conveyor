@@ -1,0 +1,40 @@
+name: Production Delivery Pipeline
+repository: https://github.com/example/my-project.git
+branch: main
+
+# Global environment variables
+env:
+  DOCKER_REGISTRY: "index.docker.io"
+  IMAGE_NAME: "my-username/my-app"
+  IMAGE_TAG: "latest"
+
+on_success: "echo 'Pipeline completed successfully!'"
+on_failure: "echo 'Pipeline failed. Check logs for details.'"
+
+jobs:
+  - name: Build
+    steps:
+      - name: Compile Code
+        command: cargo build --release
+
+  - name: Test
+    needs: ["Build"]
+    steps:
+      - name: Run Unit Tests
+        command: cargo test
+
+  - name: Dockerize
+    needs: ["Test"]
+    env:
+      DOCKER_BUILDKIT: "1"
+    steps:
+      - name: Build Docker Image
+        # Note: Use $VAR for Linux/macOS or %VAR% for Windows
+        command: "docker build -t $IMAGE_NAME:$IMAGE_TAG ."
+      
+      - name: Login to Registry
+        # It's safer to have 'docker login' configured on the runner machine beforehand
+        command: "docker login -u $DOCKER_USER -p $DOCKER_PASS"
+      
+      - name: Push Image
+        command: "docker push $IMAGE_NAME:$IMAGE_TAG"
