@@ -355,7 +355,7 @@ impl Runner {
             if let Ok(s) = status {
                 if let Some(code) = s.code() {
                     if cfg!(target_os = "windows") && code == 9009 {
-                        states[index].logs.push("Error: Command not found (9009). Ensure the tool is in your PATH or try 'python -m pip'.".to_string());
+                        states[index].logs.push("Error: Command not found (9009). Ensure 'uv' or 'python' is in your PATH.".to_string());
                     } else {
                         states[index].logs.push(format!("Step failed with exit code: {}", code));
                     }
