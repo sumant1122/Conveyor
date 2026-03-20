@@ -145,18 +145,18 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
     frame.render_widget(job_list, content_chunks[0]);
 
     // Logs
-    let logs = if let Some(state) = states.get(selected_job) {
+    let (logs, line_count) = if let Some(state) = states.get(selected_job) {
         if state.logs.is_empty() {
-            "No logs yet...".to_string()
+            ("No logs yet...".to_string(), 0)
         } else {
-            state.logs.join("\n")
+            (state.logs.join("\n"), state.logs.len())
         }
     } else {
-        "No job selected".to_string()
+        ("No job selected".to_string(), 0)
     };
 
     let title = if let Some(state) = states.get(selected_job) {
-        format!(" Logs: {} ", state.name)
+        format!(" Logs: {} [{} lines, scroll: {}] ", state.name, line_count, log_scroll)
     } else {
         " Logs ".to_string()
     };

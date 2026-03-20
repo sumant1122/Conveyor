@@ -107,11 +107,12 @@ jobs:
     // 5. Run TUI event loop
     let mut selected_job = 0;
     let mut current_view = AppView::Dashboard;
-    let mut log_scroll: u16 = 1000;
+    let mut log_scroll: u16 = 0;
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
     
     let mut current_git_info = git_info;
+    let mut git_update_tick = Instant::now();
 
     loop {
         let (states, pipeline_config) = {
@@ -120,9 +121,10 @@ jobs:
             (s.clone(), p.clone())
         };
 
-        // Update git info if we are not in remote mode (to reflect potential workspace changes)
-        if pipeline_config.repository.is_none() && last_tick.elapsed() >= Duration::from_secs(5) {
+        // Update git info periodically (every 5 seconds)
+        if pipeline_config.repository.is_none() && git_update_tick.elapsed() >= Duration::from_secs(5) {
              current_git_info = get_git_info();
+             git_update_tick = Instant::now();
         }
 
         terminal.draw(|f| ui::draw(
@@ -151,13 +153,13 @@ jobs:
                     KeyCode::Up => {
                         if selected_job > 0 {
                             selected_job -= 1;
-                            log_scroll = 1000;
+                            log_scroll = 0;
                         }
                     }
                     KeyCode::Down => {
                         if selected_job < states.len() - 1 {
                             selected_job += 1;
-                            log_scroll = 1000;
+                            log_scroll = 0;
                         }
                     }
                     KeyCode::PageUp => {
