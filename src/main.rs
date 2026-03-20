@@ -61,6 +61,16 @@ jobs:
 
     let mut pipeline = Pipeline::from_yaml(&pipeline_content)?;
     
+    // Load user environment variables
+    let env_content = tokio::fs::read_to_string("env.yaml")
+        .await
+        .unwrap_or_else(|_| {
+            let default = "API_KEY: \"your-api-key-here\"\nDEBUG: \"true\"\n";
+            std::fs::write("env.yaml", default).unwrap();
+            default.to_string()
+        });
+    let user_env: std::collections::HashMap<String, String> = serde_yaml::from_str(&env_content).unwrap_or_default();
+
     // Check for command line repo argument
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
@@ -79,9 +89,10 @@ jobs:
 
     // Keep a copy for UI
     let pipeline_config = pipeline.clone();
+    let user_env_ui = user_env.clone();
 
     // 2. Initialize runner
-    let runner = Runner::new(pipeline);
+    let runner = Runner::new(pipeline, user_env);
     let runner_states = runner.states.clone();
 
     // 3. Start runner in background
@@ -108,7 +119,7 @@ jobs:
             s.clone()
         };
 
-        terminal.draw(|f| ui::draw(f, &states, selected_job, &git_info, &pipeline_name, &current_view, &pipeline_config))?;
+        terminal.draw(|f| ui::draw(f, &states, selected_job, &git_info, &pipeline_name, &current_view, &pipeline_config, &user_env_ui))?;
 
         let timeout = tick_rate
             .checked_sub(last_tick.elapsed())
@@ -120,6 +131,7 @@ jobs:
                     KeyCode::Char('q') => break,
                     KeyCode::Char('1') => current_view = AppView::Dashboard,
                     KeyCode::Char('2') => current_view = AppView::Settings,
+                    KeyCode::Char('3') => current_view = AppView::EnvVars,
                     KeyCode::Up => {
                         if selected_job > 0 {
                             selected_job -= 1;

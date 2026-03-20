@@ -11,6 +11,7 @@ use crate::pipeline::Pipeline;
 pub enum AppView {
     Dashboard,
     Settings,
+    EnvVars,
 }
 
 pub fn draw(
@@ -21,6 +22,7 @@ pub fn draw(
     pipeline_name: &str,
     current_view: &AppView,
     pipeline: &Pipeline,
+    user_env: &std::collections::HashMap<String, String>,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -35,16 +37,18 @@ pub fn draw(
     let view_name = match current_view {
         AppView::Dashboard => "Dashboard",
         AppView::Settings => "Settings",
+        AppView::EnvVars => "Env Vars",
     };
     let header_text = format!(" {} | {} | {} | Running: {}", pipeline_name, git_info, view_name, running_count);
     let header = Paragraph::new(header_text)
-        .block(Block::default().borders(Borders::ALL).title("Conveyor Dashboard [1: Dash, 2: Settings]"))
+        .block(Block::default().borders(Borders::ALL).title("Conveyor Dashboard [1: Dash, 2: Settings, 3: Env Vars]"))
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
     frame.render_widget(header, chunks[0]);
 
     match current_view {
         AppView::Dashboard => draw_dashboard(frame, chunks[1], states, selected_job),
         AppView::Settings => draw_settings(frame, chunks[1], pipeline),
+        AppView::EnvVars => draw_env_vars(frame, chunks[1], user_env),
     }
 }
 
@@ -137,7 +141,34 @@ fn draw_settings(frame: &mut Frame, area: ratatui::layout::Rect, pipeline: &Pipe
             .style(Style::default().add_modifier(Modifier::BOLD))
             .bottom_margin(1),
     )
-    .block(Block::default().title("Environment Variables").borders(Borders::ALL));
+    .block(Block::default().title("Pipeline Configuration Envs").borders(Borders::ALL));
+
+    frame.render_widget(table, area);
+}
+
+fn draw_env_vars(frame: &mut Frame, area: ratatui::layout::Rect, env: &std::collections::HashMap<String, String>) {
+    let mut rows = Vec::new();
+    for (k, v) in env {
+        rows.push(Row::new(vec![k.clone(), v.clone()]));
+    }
+
+    if rows.is_empty() {
+        rows.push(Row::new(vec!["No environment variables stored".to_string(), "".to_string()]));
+    }
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ],
+    )
+    .header(
+        Row::new(vec!["Key", "Value"])
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .bottom_margin(1),
+    )
+    .block(Block::default().title("Stored Environment Variables (from env.yaml)").borders(Borders::ALL));
 
     frame.render_widget(table, area);
 }

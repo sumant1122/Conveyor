@@ -27,10 +27,11 @@ pub struct Runner {
     pub pipeline: Pipeline,
     pub states: Arc<Mutex<Vec<JobState>>>,
     pub workspace: Option<PathBuf>,
+    pub user_env: std::collections::HashMap<String, String>,
 }
 
 impl Runner {
-    pub fn new(pipeline: Pipeline) -> Self {
+    pub fn new(pipeline: Pipeline, user_env: std::collections::HashMap<String, String>) -> Self {
         let mut states = Vec::new();
         
         // Add a "Clone" job if a repository is specified
@@ -54,6 +55,7 @@ impl Runner {
             pipeline,
             states: Arc::new(Mutex::new(states)),
             workspace: None,
+            user_env,
         }
     }
 
@@ -244,6 +246,7 @@ impl Runner {
 
         if let Some(env) = &self.pipeline.env { cmd.envs(env); }
         if let Some(env) = &job.env { cmd.envs(env); }
+        cmd.envs(&self.user_env);
 
         let mut child = match cmd.spawn() {
             Ok(c) => c,
