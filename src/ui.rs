@@ -96,30 +96,38 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
 fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_job: usize) {
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
         .split(area);
 
-    // Job List
+    // Job List with Timeline
     let items: Vec<ListItem> = states
         .iter()
         .enumerate()
         .map(|(i, state)| {
-            let (symbol, color, tag) = match state.status {
-                JobStatus::Pending => ("○", Color::Gray, "[PENDING]"),
-                JobStatus::Running => ("▶", Color::Yellow, "[RUNNING]"),
-                JobStatus::Success => ("✔", Color::Green, "[OK     ]"),
-                JobStatus::Failed => ("✘", Color::Red, "[FAIL   ]"),
+            let (marker, color, tag) = match state.status {
+                JobStatus::Pending => (" ○ ", Color::Gray, "WAIT"),
+                JobStatus::Running => (" ▶ ", Color::Yellow, "RUN "),
+                JobStatus::Success => (" ✔ ", Color::Green, "DONE"),
+                JobStatus::Failed => (" ✘ ", Color::Red, "FAIL"),
             };
 
             let mut style = Style::default().fg(color);
-            if i == selected_job {
+            let is_selected = i == selected_job;
+            
+            if is_selected {
                 style = style.add_modifier(Modifier::BOLD).bg(Color::Rgb(40, 44, 52));
             }
 
+            let connector = if i == 0 { "  " } else { "│ " };
+            let connector_style = Style::default().fg(Color::DarkGray);
+
             let line = Line::from(vec![
-                Span::styled(format!("{} ", symbol), style),
-                Span::styled(format!("{:<15}", state.name), style),
-                Span::styled(format!(" {} ", tag), style.add_modifier(Modifier::DIM)),
+                Span::styled(connector, connector_style),
+                Span::styled("──", connector_style),
+                Span::styled(marker, style),
+                Span::styled("── ", connector_style),
+                Span::styled(format!("{:<12}", state.name), style),
+                Span::styled(format!(" [{}]", tag), style.add_modifier(Modifier::DIM)),
             ]);
 
             ListItem::new(line)
@@ -127,7 +135,11 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
         .collect();
 
     let job_list = List::new(items)
-        .block(Block::default().title(" Jobs ").borders(Borders::ALL).border_type(BorderType::Rounded))
+        .block(Block::default()
+            .title(" Pipeline Timeline ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::DarkGray)))
         .highlight_style(Style::default().add_modifier(Modifier::BOLD));
     frame.render_widget(job_list, content_chunks[0]);
 

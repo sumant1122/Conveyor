@@ -225,7 +225,9 @@ impl Runner {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
                     let mut states = states_clone.lock().await;
-                    states[0].logs.push(format!("ERR: {}", line));
+                    // Standard CLI tools often use stderr for progress info. 
+                    // We'll just log the line as is.
+                    states[0].logs.push(line);
                 }
             }
         });
@@ -323,7 +325,7 @@ impl Runner {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
                     let mut states = states_clone.lock().await;
-                    states[index].logs.push(format!("ERR: {}", line));
+                    states[index].logs.push(line);
                 }
             }
         });
