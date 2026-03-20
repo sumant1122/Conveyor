@@ -107,6 +107,7 @@ jobs:
     // 5. Run TUI event loop
     let mut selected_job = 0;
     let mut current_view = AppView::Dashboard;
+    let mut log_scroll: u16 = 1000;
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
     
@@ -132,7 +133,8 @@ jobs:
             &pipeline_config.name, 
             &current_view, 
             &pipeline_config, 
-            &user_env_ui
+            &user_env_ui,
+            log_scroll,
         ))?;
 
         let timeout = tick_rate
@@ -149,12 +151,30 @@ jobs:
                     KeyCode::Up => {
                         if selected_job > 0 {
                             selected_job -= 1;
+                            log_scroll = 1000;
                         }
                     }
                     KeyCode::Down => {
                         if selected_job < states.len() - 1 {
                             selected_job += 1;
+                            log_scroll = 1000;
                         }
+                    }
+                    KeyCode::PageUp => {
+                        if log_scroll > 0 {
+                            log_scroll = log_scroll.saturating_sub(5);
+                        }
+                    }
+                    KeyCode::PageDown => {
+                        log_scroll = log_scroll.saturating_add(5);
+                    }
+                    KeyCode::Home => {
+                        log_scroll = 0;
+                    }
+                    KeyCode::End => {
+                        // We don't know the exact height, so we'll set it to a large value
+                        // and ratatui will clip it to the bottom.
+                        log_scroll = 1000;
                     }
                     _ => {}
                 }

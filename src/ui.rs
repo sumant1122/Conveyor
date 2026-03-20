@@ -38,6 +38,7 @@ pub fn draw(
     current_view: &AppView,
     pipeline: &Pipeline,
     user_env: &std::collections::HashMap<String, String>,
+    log_scroll: u16,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -51,7 +52,7 @@ pub fn draw(
     draw_header(frame, chunks[0], pipeline_name, git_info, current_view);
 
     match current_view {
-        AppView::Dashboard => draw_dashboard(frame, chunks[1], states, selected_job),
+        AppView::Dashboard => draw_dashboard(frame, chunks[1], states, selected_job, log_scroll),
         AppView::Settings => draw_settings(frame, chunks[1], pipeline),
         AppView::EnvVars => draw_env_vars(frame, chunks[1], user_env),
     }
@@ -84,7 +85,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
     let running = states.iter().filter(|s| s.status == JobStatus::Running).count();
 
     let text = format!(
-        " [q] Quit | [↑/↓] Navigate | Status: {} Total, {} Success, {} Failed, {} Running ",
+        " [q] Quit | [↑/↓] Job | [PgUp/PgDn/Home/End] Scroll Logs | Status: {} Total, {} Success, {} Failed, {} Running ",
         total, success, failed, running
     );
     
@@ -93,7 +94,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
     frame.render_widget(footer, area);
 }
 
-fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_job: usize) {
+fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_job: usize, log_scroll: u16) {
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
@@ -162,7 +163,8 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
 
     let log_view = Paragraph::new(logs)
         .block(Block::default().title(title).borders(Borders::ALL).border_type(BorderType::Rounded))
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: true })
+        .scroll((log_scroll, 0));
     frame.render_widget(log_view, content_chunks[1]);
 }
 
