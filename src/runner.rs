@@ -346,12 +346,25 @@ impl Runner {
             }
         });
 
-        let success = child.wait().await.map(|s| s.success()).unwrap_or(false);
+        let status = child.wait().await;
+        let success = status.as_ref().map(|s| s.success()).unwrap_or(false);
         let _ = tokio::join!(out_h, err_h);
 
         if !success {
             let mut states = self.states.lock().await;
-            states[index].logs.push("Step failed.".to_string());
+            if let Ok(s) = status {
+                if let Some(code) = s.code() {
+                    if cfg!(target_os = "windows") && code == 9009 {
+                        states[index].logs.push("Error: Command not found (9009). Ensure the tool is in your PATH or try 'python -m pip'.".to_string());
+                    } else {
+                        states[index].logs.push(format!("Step failed with exit code: {}", code));
+                    }
+                } else {
+                    states[index].logs.push("Step failed (terminated by signal).".to_string());
+                }
+            } else {
+                states[index].logs.push("Step failed (unknown error).".to_string());
+            }
         }
         success
     }
