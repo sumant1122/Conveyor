@@ -1,8 +1,8 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap, Table, Row, Tabs, Cell},
+    widgets::{Block, List, ListItem, Paragraph, Wrap, Table, Row, Tabs, Cell, Padding},
     Frame,
 };
 use crate::runner::{JobState, JobStatus};
@@ -24,8 +24,12 @@ impl AppView {
         }
     }
 
-    pub fn titles() -> Vec<&'static str> {
-        vec![" [1] Dashboard ", " [2] Pipeline Config ", " [3] Env Variables "]
+    pub fn titles() -> Vec<Line<'static>> {
+        vec![
+            Line::from(vec![" 󰄬 ".cyan(), "Dashboard ".into()]),
+            Line::from(vec![" 󰘦 ".magenta(), "Pipeline ".into()]),
+            Line::from(vec![" 󱐋 ".yellow(), "Environment ".into()]),
+        ]
     }
 }
 
@@ -42,23 +46,18 @@ pub fn draw(
 ) {
     let area = frame.area();
     
-    // RESPONSIVE: If height is too small, skip header/footer to save space
-    let show_header = area.height > 10;
-    let show_footer = area.height > 15;
+    // RESPONSIVE: If height is too small, skip header/footer
+    let show_header = area.height > 6;
+    let show_footer = area.height > 12;
 
-    let vertical_constraints = if show_header && show_footer {
-        vec![Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)]
-    } else if show_header {
-        vec![Constraint::Length(3), Constraint::Min(0)]
-    } else {
-        vec![Constraint::Min(0)]
+    let constraints = match (show_header, show_footer) {
+        (true, true) => vec![Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)],
+        (true, false) => vec![Constraint::Length(3), Constraint::Min(0)],
+        (false, true) => vec![Constraint::Min(0), Constraint::Length(1)],
+        (false, false) => vec![Constraint::Min(0)],
     };
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(vertical_constraints)
-        .split(area);
-
+    let chunks = Layout::vertical(constraints).split(area);
     let mut current_chunk = 0;
 
     if show_header {
@@ -66,10 +65,11 @@ pub fn draw(
         current_chunk += 1;
     }
 
+    let main_area = chunks[current_chunk];
     match current_view {
-        AppView::Dashboard => draw_dashboard(frame, chunks[current_chunk], states, selected_job, log_scroll),
-        AppView::Settings => draw_settings(frame, chunks[current_chunk], pipeline),
-        AppView::EnvVars => draw_env_vars(frame, chunks[current_chunk], user_env),
+        AppView::Dashboard => draw_dashboard(frame, main_area, states, selected_job, log_scroll),
+        AppView::Settings => draw_settings(frame, main_area, pipeline),
+        AppView::EnvVars => draw_env_vars(frame, main_area, user_env),
     }
 
     if show_footer {
@@ -77,75 +77,56 @@ pub fn draw(
     }
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
-    let total = states.len();
-    let success = states.iter().filter(|s| s.status == JobStatus::Success).count();
-    let failed = states.iter().filter(|s| s.status == JobStatus::Failed).count();
-    let running = states.iter().filter(|s| s.status == JobStatus::Running).count();
-
-    let text = format!(
-        " [q] Quit | [1-3] Views | [Up/Down] Job | [PgUp/PgDn/Home/End] Scroll Logs | Status: {} Total, {} OK, {} Fail, {} Run ",
-        total, success, failed, running
-    );
-    
-    let footer = Paragraph::new(text)
-        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
-    frame.render_widget(footer, area);
-}
-
 fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &str, current_view: &AppView) {
-    // FLEXIBLE HEADER: Don't use fixed percentages that crush text
-    let header_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(30),   // Pipeline & Tabs get priority
-            Constraint::Max(40),   // Git info stays on the right
-        ])
-        .split(area);
+    let chunks = Layout::horizontal([
+        Constraint::Min(40),
+        Constraint::Max(40),
+    ]).split(area);
 
     let tabs = Tabs::new(AppView::titles())
-        .block(Block::default().borders(Borders::ALL).title(format!(" {} ", pipeline_name)))
-        .highlight_style(Style::default().fg(Color::Yellow).bold())
-        .select(current_view.to_index());
-    frame.render_widget(tabs, header_chunks[0]);
+        .block(Block::bordered().title(Line::from(vec![" ".into(), pipeline_name.bold().cyan(), " ".into()])))
+        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+        .select(current_view.to_index())
+        .padding(" ", " ");
+    
+    frame.render_widget(tabs, chunks[0]);
 
-    if header_chunks[1].width > 10 {
-        let git_p = Paragraph::new(format!(" {} ", git_info))
-            .block(Block::default().borders(Borders::ALL).title(" Git "))
-            .style(Style::default().fg(Color::Cyan));
-        frame.render_widget(git_p, header_chunks[1]);
+    if chunks[1].width > 15 {
+        let git_p = Paragraph::new(Line::from(vec![
+            " 󰊢 ".cyan().bold(),
+            git_info.dim().into(),
+        ]))
+        .block(Block::bordered().title(" Git Context "))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(git_p, chunks[1]);
     }
 }
 
 fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_job: usize, log_scroll: u16) {
-    // FLEXIBLE DASHBOARD: Ensure logs get at least 60% or remaining space
-    let content_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(30), // Fixed width for jobs list
-            Constraint::Min(0),     // Logs take all the rest
-        ])
-        .split(area);
+    let chunks = Layout::horizontal([
+        Constraint::Length(30),
+        Constraint::Min(0),
+    ]).split(area);
 
-    // Job List
+    // Job List with better styling
     let items: Vec<ListItem> = states
         .iter()
         .enumerate()
         .map(|(i, state)| {
-            let (marker, color) = match state.status {
-                JobStatus::Pending => (" o ", Color::Gray),
-                JobStatus::Running => (" > ", Color::Yellow),
-                JobStatus::Success => (" v ", Color::Green),
-                JobStatus::Failed => (" x ", Color::Red),
+            let (icon, color) = match state.status {
+                JobStatus::Pending => ("󰑐 ", Color::Gray),
+                JobStatus::Running => ("󱑮 ", Color::Yellow),
+                JobStatus::Success => ("󰄬 ", Color::Green),
+                JobStatus::Failed => ("󰅖 ", Color::Red),
             };
 
             let mut style = Style::default().fg(color);
             if i == selected_job {
-                style = style.add_modifier(Modifier::REVERSED);
+                style = style.bg(Color::Rgb(40, 44, 52)).add_modifier(Modifier::BOLD);
             }
 
             let line = Line::from(vec![
-                Span::styled(marker, style),
+                Span::styled(format!(" {} ", icon), style),
                 Span::styled(state.name.clone(), style),
             ]);
 
@@ -154,38 +135,43 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
         .collect();
 
     let job_list = List::new(items)
-        .block(Block::default().title(" Jobs ").borders(Borders::ALL));
-    frame.render_widget(job_list, content_chunks[0]);
+        .block(Block::bordered().title(" Pipeline Jobs ").padding(Padding::horizontal(1)))
+        .highlight_symbol(">> ")
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+    
+    frame.render_widget(job_list, chunks[0]);
 
-    // Logs
+    // Logs with better UI
     let (logs, line_count) = if let Some(state) = states.get(selected_job) {
         if state.logs.is_empty() {
-            ("No logs yet...".to_string(), 0)
+            ("No logs generated yet for this job.".dim().to_string(), 0)
         } else {
             (state.logs.join("\n"), state.logs.len())
         }
     } else {
-        ("No job selected".to_string(), 0)
+        ("Select a job to view logs.".italic().to_string(), 0)
     };
 
-    let title = if let Some(state) = states.get(selected_job) {
-        format!(" Logs: {} [{} lines] ", state.name, line_count)
-    } else {
-        " Logs ".to_string()
-    };
+    let job_name = states.get(selected_job).map(|s| s.name.as_str()).unwrap_or("None");
+    let title = Line::from(vec![
+        " Logs: ".into(),
+        job_name.bold().yellow(),
+        format!(" [{} lines] ", line_count).dim(),
+    ]);
 
     let log_view = Paragraph::new(logs)
-        .block(Block::default().title(title).borders(Borders::ALL))
+        .block(Block::bordered().title(title).padding(Padding::uniform(1)))
         .wrap(Wrap { trim: true })
         .scroll((log_scroll, 0));
-    frame.render_widget(log_view, content_chunks[1]);
+    
+    frame.render_widget(log_view, chunks[1]);
 }
 
 fn draw_settings(frame: &mut Frame, area: Rect, pipeline: &Pipeline) {
     let mut rows = Vec::new();
 
     rows.push(Row::new(vec![
-        Cell::from("GLOBAL").bold().yellow(),
+        Cell::from("GLOBAL").bold().cyan(),
         Cell::from(""),
         Cell::from(""),
     ]));
@@ -193,8 +179,8 @@ fn draw_settings(frame: &mut Frame, area: Rect, pipeline: &Pipeline) {
     if let Some(env) = &pipeline.env {
         for (k, v) in env {
             rows.push(Row::new(vec![
-                Cell::from(""),
-                Cell::from(k.clone()),
+                Cell::from("  ├─").dim(),
+                Cell::from(k.clone()).yellow(),
                 Cell::from(v.clone()).italic().dim(),
             ]));
         }
@@ -204,15 +190,15 @@ fn draw_settings(frame: &mut Frame, area: Rect, pipeline: &Pipeline) {
 
     for job in &pipeline.jobs {
         rows.push(Row::new(vec![
-            Cell::from(format!("JOB: {}", job.name)).bold().yellow(),
+            Cell::from(format!("JOB: {}", job.name)).bold().magenta(),
             Cell::from(""),
             Cell::from(""),
         ]));
         if let Some(env) = &job.env {
             for (k, v) in env {
                 rows.push(Row::new(vec![
-                    Cell::from(""),
-                    Cell::from(k.clone()),
+                    Cell::from("  ├─").dim(),
+                    Cell::from(k.clone()).yellow(),
                     Cell::from(v.clone()).italic().dim(),
                 ]));
             }
@@ -228,21 +214,24 @@ fn draw_settings(frame: &mut Frame, area: Rect, pipeline: &Pipeline) {
         ],
     )
     .header(
-        Row::new(vec!["Scope", "Key", "Value"])
-            .style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))
+        Row::new(vec!["Scope", "Variable", "Value"])
+            .style(Style::default().bold().underlined().fg(Color::Cyan))
             .bottom_margin(1),
     )
-    .block(Block::default().title(" Pipeline Configuration ").borders(Borders::ALL));
+    .block(Block::bordered().title(" Pipeline Configuration ").padding(Padding::uniform(1)));
 
     frame.render_widget(table, area);
 }
 
 fn draw_env_vars(frame: &mut Frame, area: Rect, env: &std::collections::HashMap<String, String>) {
     let mut rows = Vec::new();
-    for (k, v) in env {
+    let mut keys: Vec<_> = env.keys().collect();
+    keys.sort();
+
+    for k in keys {
         rows.push(Row::new(vec![
-            Cell::from(k.clone()).bold().cyan(),
-            Cell::from(v.clone()).italic(),
+            Cell::from(k.clone()).bold().yellow(),
+            Cell::from(env.get(k).unwrap().clone()).italic(),
         ]));
     }
 
@@ -262,10 +251,39 @@ fn draw_env_vars(frame: &mut Frame, area: Rect, env: &std::collections::HashMap<
     )
     .header(
         Row::new(vec!["Variable Name", "Value"])
-            .style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))
+            .style(Style::default().bold().underlined().fg(Color::Cyan))
             .bottom_margin(1),
     )
-    .block(Block::default().title(" Local Environment (env.yaml) ").borders(Borders::ALL));
+    .block(Block::bordered().title(" Local Environment (env.yaml) ").padding(Padding::uniform(1)));
 
     frame.render_widget(table, area);
+}
+
+fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
+    let total = states.len();
+    let success = states.iter().filter(|s| s.status == JobStatus::Success).count();
+    let failed = states.iter().filter(|s| s.status == JobStatus::Failed).count();
+    let running = states.iter().filter(|s| s.status == JobStatus::Running).count();
+
+    let status_line = Line::from(vec![
+        " [q] Quit ".bold().red(),
+        "│".dim(),
+        " [1-3] Views ".bold().blue(),
+        "│".dim(),
+        " [↑↓] Jobs ".bold().yellow(),
+        "│".dim(),
+        " [PgUp/Dn] Logs ".bold().magenta(),
+        "│ ".dim(),
+        format!(" {} Total ", total).into(),
+        "│ ".dim(),
+        format!(" {} OK ", success).green(),
+        "│ ".dim(),
+        format!(" {} Fail ", failed).red(),
+        "│ ".dim(),
+        format!(" {} Run ", running).yellow(),
+    ]);
+    
+    let footer = Paragraph::new(status_line)
+        .bg(Color::Rgb(30, 30, 30));
+    frame.render_widget(footer, area);
 }

@@ -33,6 +33,25 @@ fn get_git_info() -> String {
 
 use crate::ui::AppView;
 
+fn setup_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    Ok(Terminal::new(backend)?)
+}
+
+fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> anyhow::Result<()> {
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -47,8 +66,7 @@ async fn main() -> anyhow::Result<()> {
         });
     let user_env: std::collections::HashMap<String, String> = serde_yaml::from_str(&env_content).unwrap_or_default();
 
-    let mut pipeline = if args.len() > 1 {
-        // If repo is provided, start with a "Skeleton" pipeline that just handles the clone
+    let pipeline = if args.len() > 1 {
         Pipeline {
             name: "Remote Pipeline".to_string(),
             repository: Some(args[1].clone()),
@@ -59,7 +77,6 @@ async fn main() -> anyhow::Result<()> {
             jobs: Vec::new(),
         }
     } else {
-        // Otherwise, read local pipeline.yaml
         let content = tokio::fs::read_to_string("pipeline.yaml")
             .await
             .unwrap_or_else(|_| {
@@ -76,35 +93,23 @@ jobs:
         Pipeline::from_yaml(&content)?
     };
 
-    let pipeline_name = pipeline.name.clone();
     let git_info = if pipeline.repository.is_some() {
         format!("Remote: {}", pipeline.repository.as_ref().unwrap())
     } else {
         get_git_info()
     };
 
-    // Keep a copy for UI
-    let pipeline_config = pipeline.clone();
     let user_env_ui = user_env.clone();
-
-    // 2. Initialize runner
     let runner = Runner::new(pipeline, user_env);
     let runner_states = runner.states.clone();
     let runner_pipeline = runner.pipeline.clone();
 
-    // 3. Start runner in background
-    let _runner_handle = tokio::spawn(async move {
+    tokio::spawn(async move {
         runner.run().await;
     });
 
-    // 4. Set up TUI
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = setup_terminal()?;
 
-    // 5. Run TUI event loop
     let mut selected_job = 0;
     let mut current_view = AppView::Dashboard;
     let mut log_scroll: u16 = 0;
@@ -121,7 +126,6 @@ jobs:
             (s.clone(), p.clone())
         };
 
-        // Update git info periodically (every 5 seconds)
         if pipeline_config.repository.is_none() && git_update_tick.elapsed() >= Duration::from_secs(5) {
              current_git_info = get_git_info();
              git_update_tick = Instant::now();
@@ -162,22 +166,10 @@ jobs:
                             log_scroll = 0;
                         }
                     }
-                    KeyCode::PageUp => {
-                        if log_scroll > 0 {
-                            log_scroll = log_scroll.saturating_sub(5);
-                        }
-                    }
-                    KeyCode::PageDown => {
-                        log_scroll = log_scroll.saturating_add(5);
-                    }
-                    KeyCode::Home => {
-                        log_scroll = 0;
-                    }
-                    KeyCode::End => {
-                        // We don't know the exact height, so we'll set it to a large value
-                        // and ratatui will clip it to the bottom.
-                        log_scroll = 1000;
-                    }
+                    KeyCode::PageUp => log_scroll = log_scroll.saturating_sub(5),
+                    KeyCode::PageDown => log_scroll = log_scroll.saturating_add(5),
+                    KeyCode::Home => log_scroll = 0,
+                    KeyCode::End => log_scroll = 2000, // Large value to scroll to bottom
                     _ => {}
                 }
             }
@@ -188,14 +180,6 @@ jobs:
         }
     }
 
-    // Restore terminal
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-
+    restore_terminal(terminal)?;
     Ok(())
 }
