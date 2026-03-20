@@ -35,31 +35,7 @@ use crate::ui::AppView;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 1. Read pipeline.yaml
-    let pipeline_content = tokio::fs::read_to_string("pipeline.yaml")
-        .await
-        .unwrap_or_else(|_| {
-            let default = r#"name: Conveyor Build
-jobs:
-  - name: Build
-    steps:
-      - name: Compile
-        command: cargo build
-  - name: Test
-    needs: ["Build"]
-    steps:
-      - name: Unit Tests
-        command: cargo test
-  - name: Lint
-    steps:
-      - name: Check
-        command: cargo clippy
-"#;
-            std::fs::write("pipeline.yaml", default).unwrap();
-            default.to_string()
-        });
-
-    let mut pipeline = Pipeline::from_yaml(&pipeline_content)?;
+    let args: Vec<String> = env::args().collect();
     
     // Load user environment variables
     let env_content = tokio::fs::read_to_string("env.yaml")
@@ -71,14 +47,34 @@ jobs:
         });
     let user_env: std::collections::HashMap<String, String> = serde_yaml::from_str(&env_content).unwrap_or_default();
 
-    // Check for command line repo argument
-    let args: Vec<String> = env::args().collect();
-    if args.len() > 1 {
-        pipeline.repository = Some(args[1].clone());
-        if args.len() > 2 {
-            pipeline.branch = Some(args[2].clone());
+    let mut pipeline = if args.len() > 1 {
+        // If repo is provided, start with a "Skeleton" pipeline that just handles the clone
+        Pipeline {
+            name: "Remote Pipeline".to_string(),
+            repository: Some(args[1].clone()),
+            branch: args.get(2).cloned(),
+            env: None,
+            on_success: None,
+            on_failure: None,
+            jobs: Vec::new(),
         }
-    }
+    } else {
+        // Otherwise, read local pipeline.yaml
+        let content = tokio::fs::read_to_string("pipeline.yaml")
+            .await
+            .unwrap_or_else(|_| {
+                let default = r#"name: Conveyor Build
+jobs:
+  - name: Build
+    steps:
+      - name: Compile
+        command: cargo build
+"#;
+                std::fs::write("pipeline.yaml", default).unwrap();
+                default.to_string()
+            });
+        Pipeline::from_yaml(&content)?
+    };
 
     let pipeline_name = pipeline.name.clone();
     let git_info = if pipeline.repository.is_some() {

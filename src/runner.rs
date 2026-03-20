@@ -60,10 +60,6 @@ impl Runner {
     }
 
     pub async fn run(mut self) {
-        let total_jobs = self.pipeline.jobs.len();
-        let mut completed_jobs = HashSet::new();
-        let mut running_jobs = HashSet::new();
-
         // 1. Prepare Workspace
         let repo_opt = self.pipeline.repository.clone();
         if let Some(repo) = repo_opt {
@@ -72,8 +68,44 @@ impl Runner {
                 let _ = self.run_hook(&self.pipeline.on_failure).await;
                 return;
             }
+            
+            // AFTER CLONE: Dynamically load pipeline.yaml from the workspace
+            if let Some(ws) = &self.workspace {
+                let yaml_path = ws.join("pipeline.yaml");
+                if yaml_path.exists() {
+                    if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
+                        if let Ok(mut new_pipeline) = Pipeline::from_yaml(&content) {
+                            // Preserve repo/branch info
+                            new_pipeline.repository = self.pipeline.repository.clone();
+                            new_pipeline.branch = self.pipeline.branch.clone();
+                            self.pipeline = new_pipeline;
+                            
+                            // Re-initialize states with the new jobs
+                            let mut states = self.states.lock().await;
+                            // Keep the first state (Clone Workspace) if it was successful
+                            let clone_state = states[0].clone();
+                            states.clear();
+                            states.push(clone_state);
+                            
+                            for j in &self.pipeline.jobs {
+                                states.push(JobState {
+                                    name: j.name.clone(),
+                                    status: JobStatus::Pending,
+                                    logs: Vec::new(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let total_jobs = self.pipeline.jobs.len();
+        let mut completed_jobs = HashSet::new();
+        if self.pipeline.repository.is_some() {
             completed_jobs.insert("Clone Workspace".to_string());
         }
+        let mut running_jobs = HashSet::new();
 
         let arc_self = Arc::new(self);
 
