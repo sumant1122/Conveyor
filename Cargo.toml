@@ -2,6 +2,13 @@
 name = "conveyor"
 version = "0.1.0"
 edition = "2024"
+authors = ["Sumant Sogikar <sumant1122@gmail.com>"]
+description = "A lightweight, local-first CI/CD runner with a real-time TUI."
+repository = "https://github.com/sumant1122/conveyor"
+homepage = "https://github.com/sumant1122/conveyor"
+license = "MIT"
+keywords = ["ci", "cd", "pipeline", "tui", "rust"]
+categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.102"
