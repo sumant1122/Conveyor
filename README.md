@@ -89,5 +89,15 @@ API_KEY: "your-secret-key"
 DEBUG: "true"
 ```
 
+## Roadmap / Upcoming Enhancements
+To closely mirror the capabilities of professional CI systems like Jenkins, the following features are planned:
+
+- **📦 Artifact Management**: Capture and archive build outputs (binaries, test reports) for later retrieval directly from the TUI.
+- **🔒 Credential & Secret Management**: A secure, encrypted store for SSH keys and API tokens with automatic log masking (e.g., `****`).
+- **🎛️ Input Parameters**: Support for "Build with Parameters," allowing users to select options (like environment or version) before a pipeline starts.
+- **🏗️ Distributed Agents**: The ability to delegate jobs to remote machines via SSH or a custom agent protocol.
+- **⏲️ Triggering System**: Background daemon mode to poll Git repositories or listen for Webhooks to trigger builds automatically.
+- **🤖 Headless Mode**: Optimized CLI output mode designed for AI agents and automated scripts, facilitating programmatic parsing and interaction without the TUI.
+
 ## License
 MIT
