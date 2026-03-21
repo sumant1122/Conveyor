@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Layout, Rect, Alignment},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, List, ListItem, Paragraph, Wrap, Table, Row, Tabs, Cell, Padding, Borders},
     Frame,
@@ -302,12 +302,12 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState], search_query:
 
     // Responsive Status Metrics
     if area.width > 70 {
-        spans.push(format!(" {} OK ", success).green().bold());
-        spans.push(format!(" {} FAIL ", failed).red().bold());
-        spans.push(format!(" {} RUN ", running).yellow().bold());
+        spans.push(format!(" {} OK ", success).bold().green());
+        spans.push(format!(" {} FAIL ", failed).bold().red());
+        spans.push(format!(" {} RUN ", running).bold().yellow());
     } else {
-        spans.push(format!(" OK:{} ".bold(), success).green());
-        spans.push(format!(" ERR:{} ".bold(), failed).red());
+        spans.push(format!(" OK:{} ", success).bold().green());
+        spans.push(format!(" ERR:{} ", failed).bold().red());
     }
     
     let footer = Paragraph::new(Line::from(spans))

@@ -74,6 +74,7 @@ async fn main() -> anyhow::Result<()> {
             env: None,
             on_success: None,
             on_failure: None,
+            concurrency: None,
             jobs: Vec::new(),
         }
     } else {
