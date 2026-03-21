@@ -16,11 +16,30 @@ pub enum JobStatus {
     Failed,
 }
 
+use ratatui::prelude::Stylize;
+use std::time::Instant;
+
 #[derive(Debug, Clone)]
 pub struct JobState {
     pub name: String,
     pub status: JobStatus,
     pub logs: Vec<String>,
+    pub start_time: Option<Instant>,
+    pub duration: Option<std::time::Duration>,
+}
+
+impl JobState {
+    pub fn elapsed(&self) -> String {
+        let duration = match self.status {
+            JobStatus::Running => self.start_time.map(|s| s.elapsed()),
+            _ => self.duration,
+        };
+
+        match duration {
+            Some(d) => format!("{}.{:01}s", d.as_secs(), d.subsec_millis() / 100),
+            None => "--".to_string(),
+        }
+    }
 }
 
 pub struct Runner {
@@ -40,6 +59,8 @@ impl Runner {
                 name: "Clone Workspace".to_string(),
                 status: JobStatus::Pending,
                 logs: Vec::new(),
+                start_time: None,
+                duration: None,
             });
         }
 
@@ -48,6 +69,8 @@ impl Runner {
                 name: j.name.clone(),
                 status: JobStatus::Pending,
                 logs: Vec::new(),
+                start_time: None,
+                duration: None,
             });
         }
 
@@ -97,6 +120,8 @@ impl Runner {
                                     name: j.name.clone(),
                                     status: JobStatus::Pending,
                                     logs: Vec::new(),
+                                    start_time: None,
+                                    duration: None,
                                 });
                             }
                         }
@@ -285,25 +310,32 @@ impl Runner {
     }
 
     async fn run_job(&self, index: usize, job: Job) {
+        let start = Instant::now();
         {
             let mut states = self.states.lock().await;
             states[index].status = JobStatus::Running;
+            states[index].start_time = Some(start);
             states[index].logs.push(format!("Starting job: {}", job.name));
         }
 
+        let mut success = true;
         for step in &job.steps {
             if !self.run_step(index, step.clone(), &job).await {
-                let mut states = self.states.lock().await;
-                states[index].status = JobStatus::Failed;
-                return;
+                success = false;
+                break;
             }
         }
 
         let mut states = self.states.lock().await;
-        states[index].status = JobStatus::Success;
+        states[index].status = if success { JobStatus::Success } else { JobStatus::Failed };
+        states[index].duration = Some(start.elapsed());
     }
 
     async fn run_step(&self, index: usize, step: Step, job: &Job) -> bool {
+        {
+            let mut states = self.states.lock().await;
+            states[index].logs.push(format!(">> Running step: {}", step.name).bold().cyan().to_string());
+        }
         let (shell, flag) = if cfg!(target_os = "windows") { ("cmd", "/C") } else { ("sh", "-c") };
         let mut cmd = Command::new(shell);
         cmd.args([flag, &step.command])
