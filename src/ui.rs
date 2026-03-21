@@ -330,11 +330,13 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState], search_query:
         spans.push(Span::styled(" [1-3] View ", Style::default().fg(CLR_BLUE)));
         spans.push(Span::styled(" [↑↓] Task ", Style::default().fg(CLR_YELLOW)));
         spans.push(Span::styled(" [/] Find ", Style::default().fg(CLR_CYAN)));
+        spans.push(Span::styled(" [R] Retry ", Style::default().fg(CLR_GREEN)));
         spans.push(Span::styled(" [PgUp/Dn] Log ", Style::default().fg(CLR_PURPLE)));
         spans.push(Span::styled(" [Q] Quit ", Style::default().fg(CLR_RED)));
     } else {
         spans.push(Span::styled(" [1-3] View ", Style::default().fg(CLR_BLUE)));
         spans.push(Span::styled(" [/] Find ", Style::default().fg(CLR_CYAN)));
+        spans.push(Span::styled(" [R] Retry ", Style::default().fg(CLR_GREEN)));
         spans.push(Span::styled(" [Q] Quit ", Style::default().fg(CLR_RED)));
     }
 

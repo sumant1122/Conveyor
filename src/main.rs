@@ -14,6 +14,7 @@ use std::io;
 use std::time::{Duration, Instant};
 use std::process::Command;
 use std::env;
+use std::sync::Arc;
 
 fn get_git_info() -> String {
     let branch = Command::new("git")
@@ -101,12 +102,13 @@ jobs:
     };
 
     let user_env_ui = user_env.clone();
-    let runner = Runner::new(pipeline, user_env);
+    let runner = Arc::new(Runner::new(pipeline, user_env));
     let runner_states = runner.states.clone();
     let runner_pipeline = runner.pipeline.clone();
 
+    let runner_for_spawn = runner.clone();
     tokio::spawn(async move {
-        runner.run().await;
+        runner_for_spawn.run().await;
     });
 
     let mut terminal = setup_terminal()?;
@@ -215,6 +217,13 @@ jobs:
                         KeyCode::Char('1') => current_view = AppView::Dashboard,
                         KeyCode::Char('2') => current_view = AppView::Settings,
                         KeyCode::Char('3') => current_view = AppView::EnvVars,
+                        KeyCode::Char('r') => {
+                            let runner_clone = runner.clone();
+                            tokio::spawn(async move {
+                                runner_clone.reset().await;
+                                runner_clone.run().await;
+                            });
+                        }
                         
                         // job Selection
                         KeyCode::Up | KeyCode::Char('k') if current_view == AppView::Dashboard => {

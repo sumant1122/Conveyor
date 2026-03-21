@@ -45,7 +45,7 @@ impl JobState {
 pub struct Runner {
     pub pipeline: Arc<Mutex<Pipeline>>,
     pub states: Arc<Mutex<Vec<JobState>>>,
-    pub workspace: Option<PathBuf>,
+    pub workspace: Arc<Mutex<Option<PathBuf>>>,
     pub user_env: std::collections::HashMap<String, String>,
 }
 
@@ -80,12 +80,45 @@ impl Runner {
         Self {
             pipeline: Arc::new(Mutex::new(pipeline)),
             states: Arc::new(Mutex::new(states)),
-            workspace: None,
+            workspace: Arc::new(Mutex::new(None)),
             user_env,
         }
     }
 
-    pub async fn run(mut self) {
+    pub async fn run(&self) {
+        self.internal_run().await;
+    }
+
+    pub async fn reset(&self) {
+        let mut states = self.states.lock().await;
+        let p = self.pipeline.lock().await;
+        
+        states.clear();
+        if p.repository.is_some() {
+            states.push(JobState {
+                name: "Clone Workspace".to_string(),
+                status: JobStatus::Pending,
+                logs: Vec::new(),
+                start_time: None,
+                duration: None,
+            });
+        }
+
+        for j in &p.jobs {
+            if j.name == "Clone Workspace" && p.repository.is_some() {
+                continue;
+            }
+            states.push(JobState {
+                name: j.name.clone(),
+                status: JobStatus::Pending,
+                logs: Vec::new(),
+                start_time: None,
+                duration: None,
+            });
+        }
+    }
+
+    async fn internal_run(&self) {
         // 1. Prepare Workspace
         let (repo_opt, branch_opt, on_failure_opt) = {
             let p = self.pipeline.lock().await;
@@ -95,12 +128,17 @@ impl Runner {
         if let Some(repo) = repo_opt {
             let branch = branch_opt.unwrap_or_else(|| "main".to_string());
             if !self.clone_workspace(&repo, &branch).await {
-                let _ = self.run_hook(&on_failure_opt).await;
+                let _ = self.run_hook(&on_failure_opt, 0).await;
                 return;
             }
             
             // AFTER CLONE: Dynamically load pipeline.yaml from the workspace
-            if let Some(ws) = &self.workspace {
+            let ws_opt = {
+                let ws = self.workspace.lock().await;
+                ws.clone()
+            };
+
+            if let Some(ws) = ws_opt {
                 let yaml_path = ws.join("pipeline.yaml");
                 if yaml_path.exists() {
                     if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
@@ -147,36 +185,25 @@ impl Runner {
         }
         let mut running_jobs = HashSet::new();
 
-        let arc_self = Arc::new(self);
-
         // 2. Run Jobs
         while completed_jobs.len() < (total_jobs + if has_repo { 1 } else { 0 }) {
             // Get jobs that ARE NOT running, NOT completed, and have their requirements met
             let jobs_to_run: Vec<(usize, Job)> = {
-                let p = arc_self.pipeline.lock().await;
+                let p = self.pipeline.lock().await;
                 p.jobs.iter().enumerate()
                     .filter(|(i, j)| {
                         if running_jobs.contains(&j.name) || completed_jobs.contains(&j.name) {
                             return false;
                         }
 
-                        // Requirement check logic:
-                        // 1. If explicit 'needs' are present, follow the DAG.
-                        // 2. If 'parallel: true', run as soon as 'needs' (if any) are met.
-                        // 3. Otherwise (sequential default), must wait for the PREVIOUS job in the list to succeed.
-
                         if let Some(needs) = &j.needs {
-                             // Must follow explicit dependencies
                              needs.iter().all(|n| completed_jobs.contains(n))
                         } else if j.parallel == Some(true) {
-                             // Parallel jobs with no 'needs' run immediately
                              true
                         } else if *i > 0 {
-                             // Sequential default: depends on successful completion of the previous job in the list
                              let prev_job_name = &p.jobs[*i-1].name;
                              completed_jobs.contains(prev_job_name)
                         } else {
-                             // First job in the list (index 0) with no needs runs immediately
                              true
                         }
                     })
@@ -190,7 +217,7 @@ impl Runner {
                 }
                 
                 running_jobs.insert(job.name.clone());
-                let self_clone = arc_self.clone();
+                let self_clone = Arc::new(self.clone_for_spawn());
                 tokio::spawn(async move {
                     self_clone.run_job(index, job).await;
                 });
@@ -198,7 +225,7 @@ impl Runner {
 
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             
-            let states = arc_self.states.lock().await;
+            let states = self.states.lock().await;
             for state in states.iter() {
                 if (state.status == JobStatus::Success || state.status == JobStatus::Failed) 
                     && !completed_jobs.contains(&state.name) {
@@ -206,127 +233,106 @@ impl Runner {
                     running_jobs.remove(&state.name);
                 }
             }
-            
-            // If any job failed, we might want to stop launching new ones
-            // For now, we'll continue with independent jobs but those that 'need' the failed one won't run.
-            let any_failed = states.iter().any(|s| s.status == JobStatus::Failed);
-            if any_failed {
-                // Check if all remaining jobs can still run (none depend on a failed one)
-                // This is implicitly handled by the `needs` check above.
-            }
         }
 
         // 3. Post-pipeline hooks
-        let (all_success, on_success_opt, on_failure_opt) = {
-            let states = arc_self.states.lock().await;
-            let p = arc_self.pipeline.lock().await;
-            (states.iter().all(|s| s.status == JobStatus::Success), p.on_success.clone(), p.on_failure.clone())
+        let (all_success, on_success_opt, on_failure_opt, last_job_index) = {
+            let states = self.states.lock().await;
+            let p = self.pipeline.lock().await;
+            (
+                states.iter().all(|s| s.status == JobStatus::Success), 
+                p.on_success.clone(), 
+                p.on_failure.clone(),
+                states.len().saturating_sub(1)
+            )
         };
 
         if all_success {
-            let _ = arc_self.run_hook(&on_success_opt).await;
+            let _ = self.run_hook(&on_success_opt, last_job_index).await;
         } else {
-            let _ = arc_self.run_hook(&on_failure_opt).await;
+            let _ = self.run_hook(&on_failure_opt, last_job_index).await;
         }
     }
 
-    async fn clone_workspace(&mut self, repo: &str, branch: &str) -> bool {
+    fn clone_for_spawn(&self) -> Self {
+        Self {
+            pipeline: self.pipeline.clone(),
+            states: self.states.clone(),
+            workspace: self.workspace.clone(),
+            user_env: self.user_env.clone(),
+        }
+    }
+
+    async fn run_hook(&self, cmd_opt: &Option<String>, last_job_index: usize) -> bool {
+        let cmd = match cmd_opt {
+            Some(c) => c,
+            None => return true,
+        };
+
         {
             let mut states = self.states.lock().await;
-            states[0].status = JobStatus::Running;
-            states[0].logs.push(format!("Preparing workspace for {}...", repo));
-        }
-
-        // If repo is a local path that exists, just use it
-        let repo_path = std::path::Path::new(repo);
-        if repo_path.exists() && repo_path.is_dir() {
-            let mut states = self.states.lock().await;
-            states[0].logs.push(format!("Using local directory: {}", repo));
-            states[0].status = JobStatus::Success;
-            self.workspace = Some(repo_path.to_path_buf());
-            return true;
-        }
-
-        let workspace_path = PathBuf::from("target/workspace");
-        if workspace_path.exists() {
-            if let Err(e) = tokio::fs::remove_dir_all(&workspace_path).await {
-                let mut states = self.states.lock().await;
-                states[0].logs.push(format!("Warning: Could not clear workspace: {}. Try closing open files in target/workspace.", e));
+            if let Some(state) = states.get_mut(last_job_index) {
+                state.logs.push("".to_string());
+                state.logs.push("━".repeat(40).dim().to_string());
+                state.logs.push(format!("⟫ Executing Pipeline Hook: {}", cmd).bold().blue().to_string());
             }
         }
-        
-        // Ensure target directory exists
-        let _ = tokio::fs::create_dir_all("target").await;
 
-        let mut child = match Command::new("git")
-            .args(["clone", "--depth", "1", "--branch", branch, repo, "target/workspace"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn() {
-                Ok(c) => c,
-                Err(e) => {
-                    let mut states = self.states.lock().await;
-                    states[0].logs.push(format!("Failed to start git clone: {}. Is git installed?", e));
-                    states[0].status = JobStatus::Failed;
-                    return false;
-                }
-            };
+        let (shell, flag) = if cfg!(target_os = "windows") { ("cmd", "/C") } else { ("sh", "-c") };
+        let mut command = Command::new(shell);
+        command.args([flag, cmd]);
+        let ws_opt = {
+            let ws = self.workspace.lock().await;
+            ws.clone()
+        };
+        if let Some(ws) = ws_opt {
+            command.current_dir(ws);
+        }
+        
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = match command.spawn() {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let states_clone = self.states.clone();
         
-        let out_handle = tokio::spawn(async move {
+        let out_h = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
                 let mut states = states_clone.lock().await;
-                states[0].logs.push(line);
+                if let Some(state) = states.get_mut(last_job_index) {
+                    state.logs.push(line);
+                }
             }
         });
 
-        let err_handle = tokio::spawn({
+        let err_h = tokio::spawn({
             let states_clone = self.states.clone();
             async move {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
                     let mut states = states_clone.lock().await;
-                    // Standard CLI tools often use stderr for progress info. 
-                    // We'll just log the line as is.
-                    states[0].logs.push(line);
+                    if let Some(state) = states.get_mut(last_job_index) {
+                        state.logs.push(line);
+                    }
                 }
             }
         });
 
         let success = child.wait().await.map(|s| s.success()).unwrap_or(false);
-        let _ = tokio::join!(out_handle, err_handle);
-
-        let mut states = self.states.lock().await;
-        if success {
-            states[0].status = JobStatus::Success;
-            self.workspace = Some(workspace_path);
-            true
-        } else {
-            states[0].status = JobStatus::Failed;
-            false
+        let _ = tokio::join!(out_h, err_h);
+        
+        {
+            let mut states = self.states.lock().await;
+            if let Some(state) = states.get_mut(last_job_index) {
+                state.logs.push(format!("⟫ Hook finished with success: {}", success).bold().dim().to_string());
+            }
         }
-    }
-
-    async fn run_hook(&self, cmd_opt: &Option<String>) -> bool {
-        let cmd = match cmd_opt {
-            Some(c) => c,
-            None => return true,
-        };
-        let (shell, flag) = if cfg!(target_os = "windows") { ("cmd", "/C") } else { ("sh", "-c") };
-        let mut command = Command::new(shell);
-        command.args([flag, cmd]);
-        if let Some(ws) = &self.workspace {
-            command.current_dir(ws);
-        }
-        let mut child = match command.spawn() {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-        child.wait().await.map(|s| s.success()).unwrap_or(false)
+        
+        success
     }
 
     async fn run_job(&self, index: usize, job: Job) {
@@ -362,7 +368,11 @@ impl Runner {
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
 
-        if let Some(ws) = &self.workspace {
+        let ws_opt = {
+            let ws = self.workspace.lock().await;
+            ws.clone()
+        };
+        if let Some(ws) = ws_opt {
             cmd.current_dir(ws);
         }
 
@@ -426,5 +436,88 @@ impl Runner {
             }
         }
         success
+    }
+
+    async fn clone_workspace(&self, repo: &str, branch: &str) -> bool {
+        {
+            let mut states = self.states.lock().await;
+            states[0].status = JobStatus::Running;
+            states[0].logs.push(format!("Preparing workspace for {}...", repo));
+        }
+
+        // If repo is a local path that exists, just use it
+        let repo_path = std::path::Path::new(repo);
+        if repo_path.exists() && repo_path.is_dir() {
+            let mut states = self.states.lock().await;
+            states[0].logs.push(format!("Using local directory: {}", repo));
+            states[0].status = JobStatus::Success;
+            let mut ws = self.workspace.lock().await;
+            *ws = Some(repo_path.to_path_buf());
+            return true;
+        }
+
+        let workspace_path = PathBuf::from("target/workspace");
+        if workspace_path.exists() {
+            if let Err(e) = tokio::fs::remove_dir_all(&workspace_path).await {
+                let mut states = self.states.lock().await;
+                states[0].logs.push(format!("Warning: Could not clear workspace: {}. Try closing open files in target/workspace.", e));
+            }
+        }
+        
+        // Ensure target directory exists
+        let _ = tokio::fs::create_dir_all("target").await;
+
+        let mut child = match Command::new("git")
+            .args(["clone", "--depth", "1", "--branch", branch, repo, "target/workspace"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    let mut states = self.states.lock().await;
+                    states[0].logs.push(format!("Failed to start git clone: {}. Is git installed?", e));
+                    states[0].status = JobStatus::Failed;
+                    return false;
+                }
+            };
+
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let states_clone = self.states.clone();
+        
+        let out_handle = tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                let mut states = states_clone.lock().await;
+                states[0].logs.push(line);
+            }
+        });
+
+        let err_handle = tokio::spawn({
+            let states_clone = self.states.clone();
+            async move {
+                let mut reader = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    let mut states = states_clone.lock().await;
+                    // Standard CLI tools often use stderr for progress info. 
+                    // We'll just log the line as is.
+                    states[0].logs.push(line);
+                }
+            }
+        });
+
+        let success = child.wait().await.map(|s| s.success()).unwrap_or(false);
+        let _ = tokio::join!(out_handle, err_handle);
+
+        let mut states = self.states.lock().await;
+        if success {
+            states[0].status = JobStatus::Success;
+            let mut ws = self.workspace.lock().await;
+            *ws = Some(workspace_path);
+            true
+        } else {
+            states[0].status = JobStatus::Failed;
+            false
+        }
     }
 }
