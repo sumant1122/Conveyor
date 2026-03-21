@@ -32,6 +32,17 @@ cargo build --release
    cargo run
    ```
 
+### Remote Repositories
+Conveyor can also run pipelines directly from a remote Git repository. It will clone the repository into a temporary workspace and automatically load the `pipeline.yaml` from its root.
+
+```bash
+# Run the default branch (usually main)
+cargo run -- https://github.com/user/repo.git
+
+# Run a specific branch
+cargo run -- https://github.com/user/repo.git my-feature-branch
+```
+
 ### Navigation & Controls
 - **'1' / '2' / '3' / '4'**: Switch between **Dashboard**, **History**, **Pipeline Config**, and **Env Variables**.
 - **Up/Down Arrows**: Select a job in the Dashboard to view its logs.
