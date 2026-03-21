@@ -140,8 +140,11 @@ jobs:
             
             if current_count > last_count {
                 // If we're at the bottom (or very close), auto-scroll
-                if log_scroll >= last_count.saturating_sub(10) as u16 {
-                    log_scroll = current_count as u16;
+                // We assume visible height is around 20-30 lines.
+                // If log_scroll is within 20 lines of the end of the PREVIOUS count, 
+                // we consider it "at the bottom".
+                if log_scroll + 20 >= last_count as u16 {
+                    log_scroll = u16::MAX;
                 }
                 last_log_counts.insert(selected_job, current_count);
             }
@@ -161,7 +164,7 @@ jobs:
             &current_view, 
             &pipeline_config, 
             &user_env_ui,
-            log_scroll,
+            &mut log_scroll,
             &search_query,
         ))?;
 
@@ -231,7 +234,7 @@ jobs:
                         KeyCode::PageUp => log_scroll = log_scroll.saturating_sub(15),
                         KeyCode::PageDown => log_scroll = log_scroll.saturating_add(15),
                         KeyCode::Home => log_scroll = 0,
-                        KeyCode::End => log_scroll = 5000, 
+                        KeyCode::End => log_scroll = u16::MAX, 
                         _ => {}
                     }
                 }

@@ -54,7 +54,7 @@ pub fn draw(
     current_view: &AppView,
     pipeline: &Pipeline,
     user_env: &std::collections::HashMap<String, String>,
-    log_scroll: u16,
+    log_scroll: &mut u16,
     search_query: &str,
 ) {
     let area = frame.area();
@@ -129,7 +129,7 @@ fn draw_progress(frame: &mut Frame, area: Rect, states: &[JobState]) {
     frame.render_widget(gauge, area);
 }
 
-fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_job: usize, log_scroll: u16, search_query: &str) {
+fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_job: usize, log_scroll: &mut u16, search_query: &str) {
     let chunks = Layout::horizontal([
         Constraint::Percentage(30),
         Constraint::Min(0),
@@ -212,13 +212,24 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
         Line::from(vec![Span::styled(" TERMINAL ", Style::default().bold().fg(CLR_GRAY))])
     };
 
+    // Calculate visible height for scrolling
+    let log_area = chunks[1];
+    let visible_height = log_area.height.saturating_sub(3) as usize; // Title + Padding
+
+    if *log_scroll == u16::MAX {
+        *log_scroll = line_count.saturating_sub(visible_height) as u16;
+    } else {
+        // Clamp log_scroll to avoid scrolling past everything
+        *log_scroll = (*log_scroll).min(line_count.saturating_sub(1) as u16);
+    }
+
     let log_view = Paragraph::new(logs_text)
         .block(Block::default()
             .title(log_title)
             .padding(Padding::new(2, 2, 1, 1))
         )
         .wrap(Wrap { trim: false })
-        .scroll((log_scroll, 0));
+        .scroll((*log_scroll, 0));
     
     frame.render_widget(log_view, chunks[1]);
 }
