@@ -26,9 +26,9 @@ impl AppView {
 
     pub fn titles() -> Vec<Line<'static>> {
         vec![
-            Line::from(vec![" 󰄬 ".cyan(), "Dashboard".into()]),
-            Line::from(vec![" 󰘦 ".magenta(), "Pipeline".into()]),
-            Line::from(vec![" 󱐋 ".yellow(), "Environment".into()]),
+            Line::from(vec![" [D] ".cyan(), "Dashboard".into()]),
+            Line::from(vec![" [P] ".magenta(), "Pipeline".into()]),
+            Line::from(vec![" [E] ".yellow(), "Environment".into()]),
         ]
     }
 }
@@ -46,7 +46,6 @@ pub fn draw(
 ) {
     let area = frame.area();
     
-    // Minimal vertical overhead: 1 line for header, 1 for footer
     let constraints = vec![
         Constraint::Length(1), // Header
         Constraint::Min(0),    // Main Content
@@ -76,11 +75,11 @@ fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &st
 
     // Pipeline Name
     frame.render_widget(
-        Paragraph::new(format!(" {} ", pipeline_name)).bold().cyan().bg(Color::Rgb(40, 44, 52)),
+        Paragraph::new(format!(" {} ", pipeline_name.to_uppercase())).bold().black().bg(Color::Cyan),
         chunks[0]
     );
 
-    // Tabs (single line)
+    // Tabs
     let tabs = Tabs::new(AppView::titles())
         .highlight_style(Style::default().bold().underlined().fg(Color::White))
         .select(current_view.to_index())
@@ -90,7 +89,7 @@ fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &st
 
     // Git info
     if chunks[2].width > 10 {
-        let git_p = Paragraph::new(format!(" 󰊢 {} ", git_info))
+        let git_p = Paragraph::new(format!(" git:{} ", git_info))
             .dim()
             .alignment(Alignment::Right);
         frame.render_widget(git_p, chunks[2]);
@@ -108,15 +107,15 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
         .iter()
         .enumerate()
         .map(|(i, state)| {
-            let (icon, color) = match state.status {
-                JobStatus::Pending => ("󰑐 ", Color::Gray),
-                JobStatus::Running => ("󱑮 ", Color::Yellow),
-                JobStatus::Success => ("󰄬 ", Color::Green),
-                JobStatus::Failed => ("󰅖 ", Color::Red),
+            let (marker, color) = match state.status {
+                JobStatus::Pending => (" . ", Color::Gray),
+                JobStatus::Running => (" > ", Color::Yellow),
+                JobStatus::Success => (" v ", Color::Green),
+                JobStatus::Failed => (" x ", Color::Red),
             };
 
             let mut line = Line::from(vec![
-                Span::styled(format!(" {} ", icon), Style::default().fg(color)),
+                Span::styled(marker, Style::default().fg(color).bold()),
                 Span::from(state.name.clone()),
             ]);
 
@@ -132,7 +131,7 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
         .block(Block::default()
             .borders(Borders::RIGHT)
             .border_style(Style::default().dim())
-            .title(" 󰑮 JOBS ".bold())
+            .title(" JOBS ".bold())
         );
     
     frame.render_widget(job_list, chunks[0]);
@@ -149,14 +148,14 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
     };
 
     let log_title = if let Some(state) = states.get(selected_job) {
-        format!(" 󰚚 LOGS: {} [{} lines] ", state.name.to_uppercase(), line_count)
+        format!(" LOGS: {} [{} lines] ", state.name.to_uppercase(), line_count)
     } else {
-        " 󰚚 LOGS ".to_string()
+        " LOGS ".to_string()
     };
 
     let log_view = Paragraph::new(logs)
         .block(Block::default().title(log_title.bold()))
-        .wrap(Wrap { trim: false }) // Don't trim to keep log formatting
+        .wrap(Wrap { trim: false })
         .scroll((log_scroll, 0));
     
     frame.render_widget(log_view, chunks[1]);
@@ -166,7 +165,7 @@ fn draw_settings(frame: &mut Frame, area: Rect, pipeline: &Pipeline) {
     let mut rows = Vec::new();
 
     rows.push(Row::new(vec![
-        Cell::from(" 󰒓 GLOBAL").bold().cyan(),
+        Cell::from(" [GLOBAL] ").bold().cyan(),
         Cell::from(""),
         Cell::from(""),
     ]).bottom_margin(1));
@@ -185,7 +184,7 @@ fn draw_settings(frame: &mut Frame, area: Rect, pipeline: &Pipeline) {
 
     for job in &pipeline.jobs {
         rows.push(Row::new(vec![
-            Cell::from(format!(" 󰑮 {}", job.name.to_uppercase())).bold().magenta(),
+            Cell::from(format!(" [JOB: {}] ", job.name.to_uppercase())).bold().magenta(),
             Cell::from(""),
             Cell::from(""),
         ]).top_margin(1));
@@ -256,9 +255,9 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
     let status_line = Line::from(vec![
         " [q] Quit ".bold().red(),
         " [1-3] View ".bold().blue(),
-        " [↑↓] Job ".bold().yellow(),
+        " [Up/Dn] Job ".bold().yellow(),
         " [PgUp/Dn] Scroll ".bold().magenta(),
-        " │ ".dim(),
+        " | ".dim(),
         format!(" {} OK ", success).green().bold(),
         format!(" {} FAIL ", failed).red().bold(),
         format!(" {} RUN ", running).yellow().bold(),
