@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::pipeline::{Pipeline, Job, Step};
 use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
+use chrono::{DateTime, Local};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum JobStatus {
@@ -16,17 +17,91 @@ pub enum JobStatus {
     Failed,
 }
 
-use ratatui::prelude::Stylize;
-use std::time::Instant;
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobState {
     pub name: String,
+    pub stage_name: String,
     pub status: JobStatus,
     pub logs: Vec<String>,
+    #[serde(skip)]
     pub start_time: Option<Instant>,
     pub duration: Option<std::time::Duration>,
+    pub start_timestamp: Option<DateTime<Local>>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageState {
+    pub name: String,
+    pub status: JobStatus,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BuildRecord {
+    pub id: u32,
+    pub pipeline_name: String,
+    pub timestamp: DateTime<Local>,
+    pub status: JobStatus,
+    pub jobs: Vec<JobState>,
+}
+
+pub struct HistoryManager {
+    pub root: PathBuf,
+}
+
+impl HistoryManager {
+    pub fn new() -> Self {
+        let root = PathBuf::from("history");
+        if !root.exists() {
+            let _ = std::fs::create_dir_all(&root);
+        }
+        Self { root }
+    }
+
+    pub fn save_build(&self, record: &BuildRecord) -> anyhow::Result<()> {
+        let build_dir = self.root.join(format!("build_{}", record.id));
+        std::fs::create_dir_all(&build_dir)?;
+        let json = serde_json::to_string_pretty(record)?;
+        std::fs::write(build_dir.join("record.json"), json)?;
+        Ok(())
+    }
+
+    pub fn get_next_id(&self) -> u32 {
+        let mut max_id = 0;
+        if let Ok(entries) = std::fs::read_dir(&self.root) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.starts_with("build_") {
+                        if let Ok(id) = name[6..].parse::<u32>() {
+                            max_id = max_id.max(id);
+                        }
+                    }
+                }
+            }
+        }
+        max_id + 1
+    }
+
+    pub fn load_history(&self) -> Vec<BuildRecord> {
+        let mut history = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&self.root) {
+            for entry in entries.flatten() {
+                let path = entry.path().join("record.json");
+                if path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(path) {
+                        if let Ok(record) = serde_json::from_str::<BuildRecord>(&content) {
+                            history.push(record);
+                        }
+                    }
+                }
+            }
+        }
+        history.sort_by(|a, b| b.id.cmp(&a.id));
+        history
+    }
+}
+
+use ratatui::prelude::Stylize;
+use std::time::Instant;
 
 impl JobState {
     pub fn elapsed(&self) -> String {
@@ -47,34 +122,55 @@ pub struct Runner {
     pub states: Arc<Mutex<Vec<JobState>>>,
     pub workspace: Arc<Mutex<Option<PathBuf>>>,
     pub user_env: std::collections::HashMap<String, String>,
+    pub history: HistoryManager,
+    pub build_id: u32,
 }
 
 impl Runner {
     pub fn new(pipeline: Pipeline, user_env: std::collections::HashMap<String, String>) -> Self {
+        let history = HistoryManager::new();
+        let build_id = history.get_next_id();
         let mut states = Vec::new();
         
         // Add a "Clone" job if a repository is specified
         if pipeline.repository.is_some() {
             states.push(JobState {
                 name: "Clone Workspace".to_string(),
+                stage_name: "Preparation".to_string(),
                 status: JobStatus::Pending,
                 logs: Vec::new(),
                 start_time: None,
                 duration: None,
+                start_timestamp: None,
             });
         }
 
-        for j in &pipeline.jobs {
-            if j.name == "Clone Workspace" && pipeline.repository.is_some() {
-                continue;
+        if let Some(stages) = &pipeline.stages {
+            for stage in stages {
+                for j in &stage.jobs {
+                    states.push(JobState {
+                        name: j.name.clone(),
+                        stage_name: stage.name.clone(),
+                        status: JobStatus::Pending,
+                        logs: Vec::new(),
+                        start_time: None,
+                        duration: None,
+                        start_timestamp: None,
+                    });
+                }
             }
-            states.push(JobState {
-                name: j.name.clone(),
-                status: JobStatus::Pending,
-                logs: Vec::new(),
-                start_time: None,
-                duration: None,
-            });
+        } else if let Some(jobs) = &pipeline.jobs {
+            for j in jobs {
+                states.push(JobState {
+                    name: j.name.clone(),
+                    stage_name: "Jobs".to_string(),
+                    status: JobStatus::Pending,
+                    logs: Vec::new(),
+                    start_time: None,
+                    duration: None,
+                    start_timestamp: None,
+                });
+            }
         }
 
         Self {
@@ -82,6 +178,8 @@ impl Runner {
             states: Arc::new(Mutex::new(states)),
             workspace: Arc::new(Mutex::new(None)),
             user_env,
+            history,
+            build_id,
         }
     }
 
@@ -97,24 +195,41 @@ impl Runner {
         if p.repository.is_some() {
             states.push(JobState {
                 name: "Clone Workspace".to_string(),
+                stage_name: "Preparation".to_string(),
                 status: JobStatus::Pending,
                 logs: Vec::new(),
                 start_time: None,
                 duration: None,
+                start_timestamp: None,
             });
         }
 
-        for j in &p.jobs {
-            if j.name == "Clone Workspace" && p.repository.is_some() {
-                continue;
+        if let Some(stages) = &p.stages {
+            for stage in stages {
+                for j in &stage.jobs {
+                    states.push(JobState {
+                        name: j.name.clone(),
+                        stage_name: stage.name.clone(),
+                        status: JobStatus::Pending,
+                        logs: Vec::new(),
+                        start_time: None,
+                        duration: None,
+                        start_timestamp: None,
+                    });
+                }
             }
-            states.push(JobState {
-                name: j.name.clone(),
-                status: JobStatus::Pending,
-                logs: Vec::new(),
-                start_time: None,
-                duration: None,
-            });
+        } else if let Some(jobs) = &p.jobs {
+            for j in jobs {
+                states.push(JobState {
+                    name: j.name.clone(),
+                    stage_name: "Jobs".to_string(),
+                    status: JobStatus::Pending,
+                    logs: Vec::new(),
+                    start_time: None,
+                    duration: None,
+                    start_timestamp: None,
+                });
+            }
         }
     }
 
@@ -156,17 +271,34 @@ impl Runner {
                             states.clear();
                             states.push(clone_state);
                             
-                            for j in &p.jobs {
-                                if j.name == "Clone Workspace" {
-                                    continue;
+                            if let Some(stages) = &p.stages {
+                                for stage in stages {
+                                    for j in &stage.jobs {
+                                        if j.name == "Clone Workspace" { continue; }
+                                        states.push(JobState {
+                                            name: j.name.clone(),
+                                            stage_name: stage.name.clone(),
+                                            status: JobStatus::Pending,
+                                            logs: Vec::new(),
+                                            start_time: None,
+                                            duration: None,
+                                            start_timestamp: None,
+                                        });
+                                    }
                                 }
-                                states.push(JobState {
-                                    name: j.name.clone(),
-                                    status: JobStatus::Pending,
-                                    logs: Vec::new(),
-                                    start_time: None,
-                                    duration: None,
-                                });
+                            } else if let Some(jobs) = &p.jobs {
+                                for j in jobs {
+                                    if j.name == "Clone Workspace" { continue; }
+                                    states.push(JobState {
+                                        name: j.name.clone(),
+                                        stage_name: "Jobs".to_string(),
+                                        status: JobStatus::Pending,
+                                        logs: Vec::new(),
+                                        start_time: None,
+                                        duration: None,
+                                        start_timestamp: None,
+                                    });
+                                }
                             }
                         }
                     }
@@ -176,7 +308,7 @@ impl Runner {
 
         let (total_jobs, has_repo, concurrency_limit) = {
             let p = self.pipeline.lock().await;
-            (p.jobs.len(), p.repository.is_some(), p.concurrency.unwrap_or(4))
+            (p.get_all_jobs().len(), p.repository.is_some(), p.concurrency.unwrap_or(4))
         };
         
         let mut completed_jobs = HashSet::new();
@@ -190,7 +322,8 @@ impl Runner {
             // Get jobs that ARE NOT running, NOT completed, and have their requirements met
             let jobs_to_run: Vec<(usize, Job)> = {
                 let p = self.pipeline.lock().await;
-                p.jobs.iter().enumerate()
+                let all_jobs = p.get_all_jobs();
+                all_jobs.into_iter().enumerate()
                     .filter(|(i, j)| {
                         if running_jobs.contains(&j.name) || completed_jobs.contains(&j.name) {
                             return false;
@@ -201,13 +334,13 @@ impl Runner {
                         } else if j.parallel == Some(true) {
                              true
                         } else if *i > 0 {
-                             let prev_job_name = &p.jobs[*i-1].name;
+                             let prev_job_name = &p.get_all_jobs()[*i-1].name;
                              completed_jobs.contains(prev_job_name)
                         } else {
                              true
                         }
                     })
-                    .map(|(i, j)| (i + if has_repo { 1 } else { 0 }, j.clone()))
+                    .map(|(i, j)| (i + if has_repo { 1 } else { 0 }, j))
                     .collect()
             };
 
@@ -252,6 +385,32 @@ impl Runner {
         } else {
             let _ = self.run_hook(&on_failure_opt, last_job_index).await;
         }
+
+        let _ = self.save_to_history().await;
+    }
+
+    async fn save_to_history(&self) -> anyhow::Result<()> {
+        let (pipeline_name, states) = {
+            let p = self.pipeline.lock().await;
+            let s = self.states.lock().await;
+            (p.name.clone(), s.clone())
+        };
+
+        let status = if states.iter().all(|s| s.status == JobStatus::Success) {
+            JobStatus::Success
+        } else {
+            JobStatus::Failed
+        };
+
+        let record = BuildRecord {
+            id: self.build_id,
+            pipeline_name,
+            timestamp: Local::now(),
+            status,
+            jobs: states,
+        };
+
+        self.history.save_build(&record)
     }
 
     fn clone_for_spawn(&self) -> Self {
@@ -260,6 +419,8 @@ impl Runner {
             states: self.states.clone(),
             workspace: self.workspace.clone(),
             user_env: self.user_env.clone(),
+            history: HistoryManager { root: self.history.root.clone() },
+            build_id: self.build_id,
         }
     }
 
@@ -341,6 +502,7 @@ impl Runner {
             let mut states = self.states.lock().await;
             states[index].status = JobStatus::Running;
             states[index].start_time = Some(start);
+            states[index].start_timestamp = Some(Local::now());
             states[index].logs.push(format!("Starting job: {}", job.name));
         }
 

@@ -76,7 +76,8 @@ async fn main() -> anyhow::Result<()> {
             on_success: None,
             on_failure: None,
             concurrency: None,
-            jobs: Vec::new(),
+            jobs: Some(Vec::new()),
+            stages: None,
         }
     } else {
         let content = tokio::fs::read_to_string("pipeline.yaml")
@@ -168,6 +169,8 @@ jobs:
             &user_env_ui,
             &mut log_scroll,
             &search_query,
+            runner.build_id,
+            &runner.history.load_history(),
         ))?;
 
         let timeout = tick_rate
@@ -215,8 +218,9 @@ jobs:
                             search_query.clear();
                         }
                         KeyCode::Char('1') => current_view = AppView::Dashboard,
-                        KeyCode::Char('2') => current_view = AppView::Settings,
-                        KeyCode::Char('3') => current_view = AppView::EnvVars,
+                        KeyCode::Char('2') => current_view = AppView::History,
+                        KeyCode::Char('3') => current_view = AppView::Settings,
+                        KeyCode::Char('4') => current_view = AppView::EnvVars,
                         KeyCode::Char('r') => {
                             let runner_clone = runner.clone();
                             tokio::spawn(async move {
@@ -233,7 +237,7 @@ jobs:
                             }
                         }
                         KeyCode::Down | KeyCode::Char('j') if current_view == AppView::Dashboard => {
-                            if selected_job < states.len() - 1 {
+                            if !states.is_empty() && selected_job < states.len() - 1 {
                                 selected_job += 1;
                                 log_scroll = 0;
                             }

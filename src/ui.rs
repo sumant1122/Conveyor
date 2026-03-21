@@ -23,6 +23,7 @@ const CLR_SEL_BG: Color = Color::Rgb(62, 68, 81);
 #[derive(PartialEq, Clone, Copy)]
 pub enum AppView {
     Dashboard,
+    History,
     Settings,
     EnvVars,
 }
@@ -31,14 +32,16 @@ impl AppView {
     pub fn to_index(&self) -> usize {
         match self {
             AppView::Dashboard => 0,
-            AppView::Settings => 1,
-            AppView::EnvVars => 2,
+            AppView::History => 1,
+            AppView::Settings => 2,
+            AppView::EnvVars => 3,
         }
     }
 
     pub fn titles() -> Vec<Line<'static>> {
         vec![
             Line::from(vec![Span::styled(" DASHBOARD ", Style::default().bold())]),
+            Line::from(vec![Span::styled(" HISTORY ", Style::default().bold())]),
             Line::from(vec![Span::styled(" PIPELINE ", Style::default().bold())]),
             Line::from(vec![Span::styled(" ENVIRONMENT ", Style::default().bold())]),
         ]
@@ -56,6 +59,8 @@ pub fn draw(
     user_env: &std::collections::HashMap<String, String>,
     log_scroll: &mut u16,
     search_query: &str,
+    build_id: u32,
+    history: &[crate::runner::BuildRecord],
 ) {
     let area = frame.area();
     
@@ -68,12 +73,13 @@ pub fn draw(
 
     let chunks = Layout::vertical(constraints).split(area);
 
-    draw_header(frame, chunks[0], pipeline_name, git_info, current_view);
+    draw_header(frame, chunks[0], pipeline_name, git_info, current_view, build_id);
     draw_progress(frame, chunks[1], states);
     
     let main_area = chunks[2];
     match current_view {
         AppView::Dashboard => draw_dashboard(frame, main_area, states, selected_job, log_scroll, search_query),
+        AppView::History => draw_history(frame, main_area, history),
         AppView::Settings => draw_settings(frame, main_area, pipeline),
         AppView::EnvVars => draw_env_vars(frame, main_area, user_env),
     }
@@ -81,16 +87,16 @@ pub fn draw(
     draw_footer(frame, chunks[3], states, search_query);
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &str, current_view: &AppView) {
+fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &str, current_view: &AppView, build_id: u32) {
     let chunks = Layout::horizontal([
-        Constraint::Length(pipeline_name.len() as u16 + 4),
+        Constraint::Length(pipeline_name.len() as u16 + 12),
         Constraint::Min(0),
         Constraint::Max(40),
     ]).split(area);
 
-    // App Logo/Name
+    // App Logo/Name + Build ID
     frame.render_widget(
-        Paragraph::new(format!(" CONVEYOR ⟫ {} ", pipeline_name.to_uppercase()))
+        Paragraph::new(format!(" CONVEYOR ⟫ {} #{} ", pipeline_name.to_uppercase(), build_id))
             .bold()
             .fg(CLR_BG)
             .bg(CLR_CYAN),
@@ -135,41 +141,47 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
         Constraint::Min(0),
     ]).split(area);
 
-    // --- SIDEBAR: JOB LIST ---
-    let items: Vec<ListItem> = states
-        .iter()
-        .enumerate()
-        .map(|(i, state)| {
-            let (icon, color, bg) = match state.status {
-                JobStatus::Pending => (" • ", CLR_FG, Color::Reset),
-                JobStatus::Running => (" ⟫ ", CLR_YELLOW, Color::Reset),
-                JobStatus::Success => (" ✔ ", CLR_GREEN, Color::Reset),
-                JobStatus::Failed => (" ✘ ", CLR_RED, Color::Reset),
-            };
+    // --- SIDEBAR: STAGE & JOB LIST ---
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut current_stage = String::new();
 
-            let mut style = Style::default().fg(color);
-            let mut name_style = Style::default().fg(CLR_FG);
-            
-            if i == selected_job {
-                style = style.bg(CLR_SEL_BG).bold();
-                name_style = name_style.bg(CLR_SEL_BG).bold().fg(Color::White);
-            }
+    for (i, state) in states.iter().enumerate() {
+        if state.stage_name != current_stage {
+            current_stage = state.stage_name.clone();
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(format!(" ⟫ {} ", current_stage.to_uppercase()), Style::default().bold().fg(CLR_BLUE).bg(CLR_SEL_BG)),
+            ])).style(Style::default().bg(CLR_SEL_BG)));
+        }
 
-            let line = Line::from(vec![
-                Span::styled(icon, style),
-                Span::styled(format!("{:<20}", state.name), name_style),
-                Span::styled(format!(" {:>6}", state.elapsed()), Style::default().fg(CLR_GRAY).bg(if i == selected_job { CLR_SEL_BG } else { Color::Reset })),
-            ]);
+        let (icon, color) = match state.status {
+            JobStatus::Pending => (" • ", CLR_FG),
+            JobStatus::Running => (" ⟫ ", CLR_YELLOW),
+            JobStatus::Success => (" ✔ ", CLR_GREEN),
+            JobStatus::Failed => (" ✘ ", CLR_RED),
+        };
 
-            ListItem::new(line).style(Style::default().bg(bg))
-        })
-        .collect();
+        let mut style = Style::default().fg(color);
+        let mut name_style = Style::default().fg(CLR_FG);
+        
+        if i == selected_job {
+            style = style.bg(CLR_SEL_BG).bold();
+            name_style = name_style.bg(CLR_SEL_BG).bold().fg(Color::White);
+        }
+
+        let line = Line::from(vec![
+            Span::styled(format!("  {}", icon), style),
+            Span::styled(format!("{:<18}", state.name), name_style),
+            Span::styled(format!(" {:>6}", state.elapsed()), Style::default().fg(CLR_GRAY).bg(if i == selected_job { CLR_SEL_BG } else { Color::Reset })),
+        ]);
+
+        items.push(ListItem::new(line));
+    }
 
     let job_list = List::new(items)
         .block(Block::default()
             .borders(Borders::RIGHT)
             .border_style(Style::default().fg(CLR_GRAY))
-            .title(Span::styled(" PIPELINE JOBS ", Style::default().bold().fg(CLR_GRAY)))
+            .title(Span::styled(" PIPELINE ", Style::default().bold().fg(CLR_GRAY)))
             .padding(Padding::uniform(1))
         );
     
@@ -234,6 +246,53 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
     frame.render_widget(log_view, chunks[1]);
 }
 
+fn draw_history(frame: &mut Frame, area: Rect, history: &[crate::runner::BuildRecord]) {
+    if history.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No build history found. Run a pipeline to see results here.")
+                .alignment(Alignment::Center)
+                .fg(CLR_GRAY)
+                .block(Block::default().padding(Padding::uniform(5))),
+            area
+        );
+        return;
+    }
+
+    let mut rows = Vec::new();
+    for build in history {
+        let status_style = match build.status {
+            JobStatus::Success => Style::default().fg(CLR_GREEN).bold(),
+            JobStatus::Failed => Style::default().fg(CLR_RED).bold(),
+            _ => Style::default().fg(CLR_YELLOW),
+        };
+
+        rows.push(Row::new(vec![
+            Cell::from(format!("#{}", build.id)).fg(CLR_CYAN),
+            Cell::from(build.timestamp.format("%Y-%m-%d %H:%M:%S").to_string()).fg(CLR_FG),
+            Cell::from(format!("{:?}", build.status)).style(status_style),
+            Cell::from(format!("{} jobs", build.jobs.len())).fg(CLR_GRAY),
+        ]));
+    }
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(8),
+            Constraint::Length(20),
+            Constraint::Length(12),
+            Constraint::Min(10),
+        ],
+    )
+    .header(
+        Row::new(vec!["ID", "TIMESTAMP", "STATUS", "DETAILS"])
+            .style(Style::default().bold().fg(CLR_GRAY))
+            .bottom_margin(1),
+    )
+    .block(Block::default().padding(Padding::uniform(2)));
+
+    frame.render_widget(table, area);
+}
+
 fn draw_settings(frame: &mut Frame, area: Rect, pipeline: &Pipeline) {
     let mut rows = Vec::new();
 
@@ -253,7 +312,15 @@ fn draw_settings(frame: &mut Frame, area: Rect, pipeline: &Pipeline) {
         }
     }
 
-    for job in &pipeline.jobs {
+    let all_jobs = if let Some(stages) = &pipeline.stages {
+        stages.iter().flat_map(|s| s.jobs.iter()).collect::<Vec<_>>()
+    } else if let Some(jobs) = &pipeline.jobs {
+        jobs.iter().collect()
+    } else {
+        Vec::new()
+    };
+
+    for job in all_jobs {
         rows.push(Row::new(vec![
             Cell::from(format!(" ⟫ JOB: {}", job.name.to_uppercase())).bold().fg(CLR_PURPLE),
             Cell::from(""),
@@ -327,14 +394,14 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState], search_query:
 
     // Contextual Help
     if area.width > 100 {
-        spans.push(Span::styled(" [1-3] View ", Style::default().fg(CLR_BLUE)));
+        spans.push(Span::styled(" [1-4] View ", Style::default().fg(CLR_BLUE)));
         spans.push(Span::styled(" [↑↓] Task ", Style::default().fg(CLR_YELLOW)));
         spans.push(Span::styled(" [/] Find ", Style::default().fg(CLR_CYAN)));
         spans.push(Span::styled(" [R] Retry ", Style::default().fg(CLR_GREEN)));
         spans.push(Span::styled(" [PgUp/Dn] Log ", Style::default().fg(CLR_PURPLE)));
         spans.push(Span::styled(" [Q] Quit ", Style::default().fg(CLR_RED)));
     } else {
-        spans.push(Span::styled(" [1-3] View ", Style::default().fg(CLR_BLUE)));
+        spans.push(Span::styled(" [1-4] View ", Style::default().fg(CLR_BLUE)));
         spans.push(Span::styled(" [/] Find ", Style::default().fg(CLR_CYAN)));
         spans.push(Span::styled(" [R] Retry ", Style::default().fg(CLR_GREEN)));
         spans.push(Span::styled(" [Q] Quit ", Style::default().fg(CLR_RED)));

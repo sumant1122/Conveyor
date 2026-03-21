@@ -10,6 +10,13 @@ pub struct Pipeline {
     pub on_success: Option<String>,
     pub on_failure: Option<String>,
     pub concurrency: Option<usize>,
+    pub jobs: Option<Vec<Job>>,
+    pub stages: Option<Vec<Stage>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Stage {
+    pub name: String,
     pub jobs: Vec<Job>,
 }
 
@@ -31,5 +38,15 @@ pub struct Step {
 impl Pipeline {
     pub fn from_yaml(content: &str) -> anyhow::Result<Self> {
         Ok(serde_yaml::from_str(content)?)
+    }
+
+    pub fn get_all_jobs(&self) -> Vec<Job> {
+        if let Some(stages) = &self.stages {
+            stages.iter().flat_map(|s| s.jobs.clone()).collect()
+        } else if let Some(jobs) = &self.jobs {
+            jobs.clone()
+        } else {
+            Vec::new()
+        }
     }
 }
