@@ -1,15 +1,16 @@
 # Conveyor 🏗️
 
-A lightweight, local-first CI/CD tool written in Rust with a real-time Terminal User Interface (TUI).
+A lightweight, local-first CI/CD tool written in Rust with a modern, real-time Terminal User Interface (TUI).
 
 ## Features
-- **Parallel Execution**: Jobs without dependencies run concurrently using `tokio`.
-- **Dependency Tracking**: Define job execution order with the `needs` keyword.
-- **Environment Variables**: Support for pipeline-level, job-specific, and local `env.yaml` environment variables.
-- **Git Integration**: Displays current branch and latest commit info in the TUI header.
-- **Real-time Monitoring**: Live status tracking and log streaming for each job.
-- **Cross-Platform**: Automatically selects the correct shell (`cmd` for Windows, `sh` for Linux/macOS).
+- **Parallel Execution**: Run up to `n` jobs concurrently (defaulting to 4) using `tokio`.
+- **Log Search & Filtering**: Quickly find errors or specific output with real-time log filtering (`/`).
+- **Dependency Tracking**: Define complex job execution order with the `needs` keyword.
+- **Responsive TUI**: A spacious, modern interface that adapts to your terminal size.
+- **Environment Variables**: Support for pipeline-level, job-specific, and local `env.yaml` variables.
+- **Git Integration**: Live display of current branch and latest commit info in the header.
 - **Post-Execution Hooks**: Custom `on_success` and `on_failure` shell commands.
+- **Cross-Platform**: Automatically selects the correct shell (`cmd` for Windows, `sh` for Linux/macOS).
 
 ## Installation
 Ensure you have the Rust toolchain installed.
@@ -28,51 +29,52 @@ cargo build --release
    cargo run
    ```
 
-### Navigation
-- **'1'**: Switch to **Dashboard** (Job status & logs).
-- **'2'**: Switch to **Settings** (View pipeline configuration).
-- **'3'**: Switch to **Env Vars** (View variables from `env.yaml`).
+### Navigation & Controls
+- **'1' / '2' / '3'**: Switch between **Dashboard**, **Pipeline Config**, and **Env Variables**.
 - **Up/Down Arrows**: Select a job in the Dashboard to view its logs.
+- **'/'**: Enter **Search Mode** to filter logs in real-time.
+- **'Esc'**: Exit search mode or clear the current search query.
+- **'PgUp' / 'PgDn'**: Scroll through logs.
+- **'Home' / 'End'**: Jump to the start or end of the logs.
 - **'q'**: Quit the application.
 
-## Local Environment Variables (`env.yaml`)
-You can store local or sensitive environment variables in an `env.yaml` file in the project root. These variables will be available to all jobs in the pipeline.
+## Pipeline Configuration (`pipeline.yaml`)
+Example `pipeline.yaml` with concurrency and dependencies:
 
-Example `env.yaml`:
-```yaml
-API_KEY: "your-api-key-here"
-DEBUG: "true"
-DATABASE_URL: "postgres://user:password@localhost/db"
-```
-
-## `pipeline.yaml` Example
 ```yaml
 name: Conveyor Build
-env:
-  PROJECT_NAME: Conveyor
+concurrency: 4  # Max number of parallel jobs
 on_failure: "echo 'Build failed!'"
 on_success: "echo 'Build successful!'"
 
 jobs:
+  - name: Lint
+    steps:
+      - name: Check
+        command: cargo clippy
+        
   - name: Build
     steps:
       - name: Compile
         command: cargo build
+        
   - name: Test
-    needs: ["Build"]
+    needs: ["Build"] # Only runs after 'Build' succeeds
     env:
       RUST_BACKTRACE: "1"
     steps:
       - name: Unit Tests
         command: cargo test
-  - name: Lint
-    steps:
-      - name: Check
-        command: cargo clippy
 ```
 
-## Contributing
-Contributions are welcome! Please open an issue or submit a pull request.
+## Local Environment Variables (`env.yaml`)
+Store sensitive or machine-specific variables in an `env.yaml` file. These are automatically merged into all jobs.
+
+Example `env.yaml`:
+```yaml
+API_KEY: "your-secret-key"
+DEBUG: "true"
+```
 
 ## License
 MIT

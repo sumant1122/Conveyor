@@ -9,6 +9,7 @@ pub struct Pipeline {
     pub env: Option<HashMap<String, String>>,
     pub on_success: Option<String>,
     pub on_failure: Option<String>,
+    pub concurrency: Option<usize>,
     pub jobs: Vec<Job>,
 }
 

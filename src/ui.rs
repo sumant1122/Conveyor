@@ -43,6 +43,7 @@ pub fn draw(
     pipeline: &Pipeline,
     user_env: &std::collections::HashMap<String, String>,
     log_scroll: u16,
+    search_query: &str,
 ) {
     let area = frame.area();
     
@@ -58,12 +59,12 @@ pub fn draw(
     
     let main_area = chunks[1];
     match current_view {
-        AppView::Dashboard => draw_dashboard(frame, main_area, states, selected_job, log_scroll),
+        AppView::Dashboard => draw_dashboard(frame, main_area, states, selected_job, log_scroll, search_query),
         AppView::Settings => draw_settings(frame, main_area, pipeline),
         AppView::EnvVars => draw_env_vars(frame, main_area, user_env),
     }
 
-    draw_footer(frame, chunks[2], states);
+    draw_footer(frame, chunks[2], states, search_query);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &str, current_view: &AppView) {
@@ -96,7 +97,7 @@ fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &st
     }
 }
 
-fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_job: usize, log_scroll: u16) {
+fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_job: usize, log_scroll: u16, search_query: &str) {
     let chunks = Layout::horizontal([
         Constraint::Percentage(25),
         Constraint::Min(0),
@@ -137,9 +138,20 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
     frame.render_widget(job_list, chunks[0]);
 
     // Logs
-    let (logs, line_count) = if let Some(state) = states.get(selected_job) {
+    let (logs_text, line_count) = if let Some(state) = states.get(selected_job) {
         if state.logs.is_empty() {
             ("No logs available.".dim().to_string(), 0)
+        } else if !search_query.is_empty() {
+            let filtered: Vec<String> = state.logs.iter()
+                .filter(|l| l.to_lowercase().contains(&search_query.to_lowercase()))
+                .cloned()
+                .collect();
+            let count = filtered.len();
+            if filtered.is_empty() {
+                (format!("No matches found for '{}'", search_query).italic().yellow().to_string(), 0)
+            } else {
+                (filtered.join("\n"), count)
+            }
         } else {
             (state.logs.join("\n"), state.logs.len())
         }
@@ -148,13 +160,22 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, states: &[JobState], selected_j
     };
 
     let log_title = if let Some(state) = states.get(selected_job) {
-        format!(" LOGS: {} [{} lines] ", state.name.to_uppercase(), line_count)
+        let mut title_spans = vec![
+            " LOGS: ".into(),
+            state.name.to_uppercase().bold(),
+            format!(" [{} lines] ", line_count).dim(),
+        ];
+        if !search_query.is_empty() {
+            title_spans.push(" FILTERED BY: ".yellow());
+            title_spans.push(search_query.bold().yellow());
+        }
+        Line::from(title_spans)
     } else {
-        " LOGS ".to_string()
+        Line::from(" LOGS ".bold())
     };
 
-    let log_view = Paragraph::new(logs)
-        .block(Block::default().title(log_title.bold()))
+    let log_view = Paragraph::new(logs_text)
+        .block(Block::default().title(log_title))
         .wrap(Wrap { trim: false })
         .scroll((log_scroll, 0));
     
@@ -247,7 +268,7 @@ fn draw_env_vars(frame: &mut Frame, area: Rect, env: &std::collections::HashMap<
     frame.render_widget(table, area);
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
+fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState], search_query: &str) {
     let success = states.iter().filter(|s| s.status == JobStatus::Success).count();
     let failed = states.iter().filter(|s| s.status == JobStatus::Failed).count();
     let running = states.iter().filter(|s| s.status == JobStatus::Running).count();
@@ -255,28 +276,38 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
     let mut spans = Vec::new();
 
     // Responsive Help Keys
-    if area.width > 80 {
+    if area.width > 90 {
         spans.push(" [q] Quit ".bold().red());
         spans.push(" [1-3] View ".bold().blue());
         spans.push(" [Up/Dn] Job ".bold().yellow());
+        spans.push(" [/] Search ".bold().cyan());
         spans.push(" [PgUp/Dn] Scroll ".bold().magenta());
-    } else if area.width > 40 {
+    } else if area.width > 60 {
         spans.push(" [q] Quit ".bold().red());
+        spans.push(" [/] Search ".bold().cyan());
         spans.push(" [1-3] View ".bold().blue());
     } else {
         spans.push(" q:Quit ".bold().red());
+        spans.push(" /:Find ".bold().cyan());
     }
 
     spans.push(" | ".dim());
 
+    if !search_query.is_empty() {
+        spans.push(" SEARCH: ".bold().yellow());
+        spans.push(search_query.bold().white().bg(Color::Rgb(60, 60, 60)));
+        spans.push(" [Esc] Clear ".dim());
+        spans.push(" | ".dim());
+    }
+
     // Responsive Status Metrics
-    if area.width > 60 {
+    if area.width > 70 {
         spans.push(format!(" {} OK ", success).green().bold());
         spans.push(format!(" {} FAIL ", failed).red().bold());
         spans.push(format!(" {} RUN ", running).yellow().bold());
     } else {
-        spans.push(format!(" OK:{} ", success).green().bold());
-        spans.push(format!(" ERR:{} ", failed).red().bold());
+        spans.push(format!(" OK:{} ".bold(), success).green());
+        spans.push(format!(" ERR:{} ".bold(), failed).red());
     }
     
     let footer = Paragraph::new(Line::from(spans))

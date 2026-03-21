@@ -105,9 +105,9 @@ impl Runner {
             }
         }
 
-        let (total_jobs, has_repo) = {
+        let (total_jobs, has_repo, concurrency_limit) = {
             let p = self.pipeline.lock().await;
-            (p.jobs.len(), p.repository.is_some())
+            (p.jobs.len(), p.repository.is_some(), p.concurrency.unwrap_or(4))
         };
         
         let mut completed_jobs = HashSet::new();
@@ -120,8 +120,6 @@ impl Runner {
 
         // 2. Run Jobs
         while completed_jobs.len() < (total_jobs + if has_repo { 1 } else { 0 }) {
-            let mut launched_any = false;
-
             // Get jobs that ARE NOT running, NOT completed, and have their NEEDS met
             let jobs_to_run: Vec<(usize, Job)> = {
                 let p = arc_self.pipeline.lock().await;
@@ -133,10 +131,8 @@ impl Runner {
                         if let Some(needs) = &j.needs {
                             needs.iter().all(|n| completed_jobs.contains(n))
                         } else {
-                            // SEQUENTIAL ENFORCEMENT: 
-                            // If no needs are specified, only run if NO other jobs are currently running.
-                            // This ensures they run one by one.
-                            running_jobs.is_empty()
+                            // If no needs, it can run as soon as there is a slot
+                            true
                         }
                     })
                     .map(|(i, j)| (i + if has_repo { 1 } else { 0 }, j.clone()))
@@ -144,19 +140,15 @@ impl Runner {
             };
 
             for (index, job) in jobs_to_run {
+                if running_jobs.len() >= concurrency_limit {
+                    break;
+                }
+                
                 running_jobs.insert(job.name.clone());
-                launched_any = true;
                 let self_clone = arc_self.clone();
                 tokio::spawn(async move {
                     self_clone.run_job(index, job).await;
                 });
-                
-                // If we are enforcing sequential (no needs specified), break after launching ONE
-                break; 
-            }
-
-            if !launched_any && running_jobs.is_empty() {
-                break;
             }
 
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -168,6 +160,14 @@ impl Runner {
                     completed_jobs.insert(state.name.clone());
                     running_jobs.remove(&state.name);
                 }
+            }
+            
+            // If any job failed, we might want to stop launching new ones
+            // For now, we'll continue with independent jobs but those that 'need' the failed one won't run.
+            let any_failed = states.iter().any(|s| s.status == JobStatus::Failed);
+            if any_failed {
+                // Check if all remaining jobs can still run (none depend on a failed one)
+                // This is implicitly handled by the `needs` check above.
             }
         }
 

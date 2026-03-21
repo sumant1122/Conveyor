@@ -113,6 +113,9 @@ jobs:
     let mut selected_job = 0;
     let mut current_view = AppView::Dashboard;
     let mut log_scroll: u16 = 0;
+    let mut search_query = String::new();
+    let mut is_searching = false;
+
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
     
@@ -141,6 +144,7 @@ jobs:
             &pipeline_config, 
             &user_env_ui,
             log_scroll,
+            &search_query,
         ))?;
 
         let timeout = tick_rate
@@ -149,28 +153,50 @@ jobs:
 
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Char('1') => current_view = AppView::Dashboard,
-                    KeyCode::Char('2') => current_view = AppView::Settings,
-                    KeyCode::Char('3') => current_view = AppView::EnvVars,
-                    KeyCode::Up => {
-                        if selected_job > 0 {
-                            selected_job -= 1;
-                            log_scroll = 0;
+                if is_searching {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter => {
+                            is_searching = false;
                         }
-                    }
-                    KeyCode::Down => {
-                        if selected_job < states.len() - 1 {
-                            selected_job += 1;
-                            log_scroll = 0;
+                        KeyCode::Backspace => {
+                            search_query.pop();
                         }
+                        KeyCode::Char(c) => {
+                            search_query.push(c);
+                        }
+                        _ => {}
                     }
-                    KeyCode::PageUp => log_scroll = log_scroll.saturating_sub(5),
-                    KeyCode::PageDown => log_scroll = log_scroll.saturating_add(5),
-                    KeyCode::Home => log_scroll = 0,
-                    KeyCode::End => log_scroll = 2000, // Large value to scroll to bottom
-                    _ => {}
+                } else {
+                    match key.code {
+                        KeyCode::Char('q') => break,
+                        KeyCode::Char('/') => {
+                            is_searching = true;
+                            search_query.clear();
+                        }
+                        KeyCode::Esc => {
+                            search_query.clear();
+                        }
+                        KeyCode::Char('1') => current_view = AppView::Dashboard,
+                        KeyCode::Char('2') => current_view = AppView::Settings,
+                        KeyCode::Char('3') => current_view = AppView::EnvVars,
+                        KeyCode::Up => {
+                            if selected_job > 0 {
+                                selected_job -= 1;
+                                log_scroll = 0;
+                            }
+                        }
+                        KeyCode::Down => {
+                            if selected_job < states.len() - 1 {
+                                selected_job += 1;
+                                log_scroll = 0;
+                            }
+                        }
+                        KeyCode::PageUp => log_scroll = log_scroll.saturating_sub(5),
+                        KeyCode::PageDown => log_scroll = log_scroll.saturating_add(5),
+                        KeyCode::Home => log_scroll = 0,
+                        KeyCode::End => log_scroll = 2000, 
+                        _ => {}
+                    }
                 }
             }
         }
