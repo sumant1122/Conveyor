@@ -65,6 +65,9 @@ impl Runner {
         }
 
         for j in &pipeline.jobs {
+            if j.name == "Clone Workspace" && pipeline.repository.is_some() {
+                continue;
+            }
             states.push(JobState {
                 name: j.name.clone(),
                 status: JobStatus::Pending,
@@ -116,6 +119,9 @@ impl Runner {
                             states.push(clone_state);
                             
                             for j in &p.jobs {
+                                if j.name == "Clone Workspace" {
+                                    continue;
+                                }
                                 states.push(JobState {
                                     name: j.name.clone(),
                                     status: JobStatus::Pending,
