@@ -18,6 +18,7 @@ pub struct Job {
     pub name: String,
     pub env: Option<HashMap<String, String>>,
     pub needs: Option<Vec<String>>,
+    pub parallel: Option<bool>,
     pub steps: Vec<Step>,
 }
 

@@ -145,19 +145,33 @@ impl Runner {
 
         // 2. Run Jobs
         while completed_jobs.len() < (total_jobs + if has_repo { 1 } else { 0 }) {
-            // Get jobs that ARE NOT running, NOT completed, and have their NEEDS met
+            // Get jobs that ARE NOT running, NOT completed, and have their requirements met
             let jobs_to_run: Vec<(usize, Job)> = {
                 let p = arc_self.pipeline.lock().await;
                 p.jobs.iter().enumerate()
-                    .filter(|(_i, j)| {
+                    .filter(|(i, j)| {
                         if running_jobs.contains(&j.name) || completed_jobs.contains(&j.name) {
                             return false;
                         }
+
+                        // Requirement check logic:
+                        // 1. If explicit 'needs' are present, follow the DAG.
+                        // 2. If 'parallel: true', run as soon as 'needs' (if any) are met.
+                        // 3. Otherwise (sequential default), must wait for the PREVIOUS job in the list to succeed.
+
                         if let Some(needs) = &j.needs {
-                            needs.iter().all(|n| completed_jobs.contains(n))
+                             // Must follow explicit dependencies
+                             needs.iter().all(|n| completed_jobs.contains(n))
+                        } else if j.parallel == Some(true) {
+                             // Parallel jobs with no 'needs' run immediately
+                             true
+                        } else if *i > 0 {
+                             // Sequential default: depends on successful completion of the previous job in the list
+                             let prev_job_name = &p.jobs[*i-1].name;
+                             completed_jobs.contains(prev_job_name)
                         } else {
-                            // If no needs, it can run as soon as there is a slot
-                            true
+                             // First job in the list (index 0) with no needs runs immediately
+                             true
                         }
                     })
                     .map(|(i, j)| (i + if has_repo { 1 } else { 0 }, j.clone()))

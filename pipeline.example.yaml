@@ -1,6 +1,7 @@
 name: Production Delivery Pipeline
 repository: https://github.com/example/my-project.git
 branch: main
+concurrency: 2 # Limit parallel jobs to prevent resource exhaustion
 
 # Global environment variables
 env:
@@ -18,22 +19,28 @@ jobs:
         command: cargo build --release
 
   - name: Test
-    needs: ["Build"]
+    # Sequential by default: runs after 'Build'
     steps:
       - name: Run Unit Tests
         command: cargo test
 
+  - name: Lint
+    # Explicit Parallel: Runs immediately along with Build/Test
+    parallel: true
+    steps:
+      - name: Code Quality
+        command: cargo clippy
+
   - name: Dockerize
+    # DAG: specifically requires 'Test' to be finished
     needs: ["Test"]
     env:
       DOCKER_BUILDKIT: "1"
     steps:
       - name: Build Docker Image
-        # Note: Use $VAR for Linux/macOS or %VAR% for Windows
         command: "docker build -t $IMAGE_NAME:$IMAGE_TAG ."
       
       - name: Login to Registry
-        # It's safer to have 'docker login' configured on the runner machine beforehand
         command: "docker login -u $DOCKER_USER -p $DOCKER_PASS"
       
       - name: Push Image

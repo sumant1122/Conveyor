@@ -3,13 +3,13 @@
 A lightweight, local-first CI/CD tool written in Rust with a modern, real-time Terminal User Interface (TUI).
 
 ## Features
-- **Parallel Execution**: Run up to `n` jobs concurrently (defaulting to 4) using `tokio`.
+- **Sequential by Default**: Jobs run one-by-one in the order defined in your pipeline, ensuring a predictable flow.
+- **Explicit Parallelism**: Use the `parallel: true` flag to run independent jobs concurrently.
+- **Dependency Tracking (DAG)**: Fine-tune execution order with the `needs` keyword for complex dependency graphs.
 - **Log Search & Filtering**: Quickly find errors or specific output with real-time log filtering (`/`).
-- **Dependency Tracking**: Define complex job execution order with the `needs` keyword.
-- **Responsive TUI**: A spacious, modern interface that adapts to your terminal size.
-- **Environment Variables**: Support for pipeline-level, job-specific, and local `env.yaml` variables.
+- **Responsive TUI**: A spacious, modern interface with OneDark colors that adapts to your terminal size.
 - **Git Integration**: Live display of current branch and latest commit info in the header.
-- **Post-Execution Hooks**: Custom `on_success` and `on_failure` shell commands.
+- **Environment Variables**: Support for pipeline-level, job-specific, and local `env.yaml` variables.
 - **Cross-Platform**: Automatically selects the correct shell (`cmd` for Windows, `sh` for Linux/macOS).
 
 ## Installation
@@ -35,17 +35,14 @@ cargo build --release
 - **'/'**: Enter **Search Mode** to filter logs in real-time.
 - **'Esc'**: Exit search mode or clear the current search query.
 - **'PgUp' / 'PgDn'**: Scroll through logs.
-- **'Home' / 'End'**: Jump to the start or end of the logs.
 - **'q'**: Quit the application.
 
 ## Pipeline Configuration (`pipeline.yaml`)
-Example `pipeline.yaml` with concurrency and dependencies:
+Example `pipeline.yaml` demonstrating the execution model:
 
 ```yaml
 name: Conveyor Build
-concurrency: 4  # Max number of parallel jobs
-on_failure: "echo 'Build failed!'"
-on_success: "echo 'Build successful!'"
+concurrency: 4  # Max number of total parallel jobs allowed
 
 jobs:
   - name: Lint
@@ -54,17 +51,28 @@ jobs:
         command: cargo clippy
         
   - name: Build
+    # This runs ONLY after 'Lint' succeeds (Sequential default)
     steps:
       - name: Compile
         command: cargo build
         
-  - name: Test
-    needs: ["Build"] # Only runs after 'Build' succeeds
-    env:
-      RUST_BACKTRACE: "1"
+  - name: Unit Tests
+    # This runs ONLY after 'Build' succeeds (Sequential default)
     steps:
-      - name: Unit Tests
+      - name: Tests
         command: cargo test
+
+  - name: Integration Tests
+    parallel: true # Runs immediately alongside other jobs
+    steps:
+      - name: Run
+        command: cargo test --test integration
+
+  - name: Deploy
+    needs: ["Unit Tests", "Integration Tests"] # DAG: Runs only after both are successful
+    steps:
+      - name: Push
+        command: echo "Deploying..."
 ```
 
 ## Local Environment Variables (`env.yaml`)
