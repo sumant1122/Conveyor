@@ -123,12 +123,29 @@ jobs:
     let mut current_git_info = git_info;
     let mut git_update_tick = Instant::now();
 
+    let mut last_log_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+
     loop {
         let (states, pipeline_config) = {
             let s = runner_states.lock().await;
             let p = runner_pipeline.lock().await;
             (s.clone(), p.clone())
         };
+
+        // Auto-scroll logic: If new logs arrive for the selected job, 
+        // and we were already near the bottom, scroll down.
+        if let Some(state) = states.get(selected_job) {
+            let current_count = state.logs.len();
+            let last_count = *last_log_counts.get(&selected_job).unwrap_or(&0);
+            
+            if current_count > last_count {
+                // If we're at the bottom (or very close), auto-scroll
+                if log_scroll >= last_count.saturating_sub(10) as u16 {
+                    log_scroll = current_count as u16;
+                }
+                last_log_counts.insert(selected_job, current_count);
+            }
+        }
 
         if pipeline_config.repository.is_none() && git_update_tick.elapsed() >= Duration::from_secs(5) {
              current_git_info = get_git_info();
@@ -153,7 +170,22 @@ jobs:
             .unwrap_or_else(|| Duration::from_secs(0));
 
         if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
+            let ev = event::read()?;
+            
+            // Handle Mouse Scroll
+            if let Event::Mouse(mouse) = ev {
+                match mouse.kind {
+                    event::MouseEventKind::ScrollUp => {
+                        log_scroll = log_scroll.saturating_sub(3);
+                    }
+                    event::MouseEventKind::ScrollDown => {
+                        log_scroll = log_scroll.saturating_add(3);
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Event::Key(key) = ev {
                 if is_searching {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
@@ -180,22 +212,26 @@ jobs:
                         KeyCode::Char('1') => current_view = AppView::Dashboard,
                         KeyCode::Char('2') => current_view = AppView::Settings,
                         KeyCode::Char('3') => current_view = AppView::EnvVars,
-                        KeyCode::Up => {
+                        
+                        // job Selection
+                        KeyCode::Up | KeyCode::Char('k') if current_view == AppView::Dashboard => {
                             if selected_job > 0 {
                                 selected_job -= 1;
                                 log_scroll = 0;
                             }
                         }
-                        KeyCode::Down => {
+                        KeyCode::Down | KeyCode::Char('j') if current_view == AppView::Dashboard => {
                             if selected_job < states.len() - 1 {
                                 selected_job += 1;
                                 log_scroll = 0;
                             }
                         }
-                        KeyCode::PageUp => log_scroll = log_scroll.saturating_sub(5),
-                        KeyCode::PageDown => log_scroll = log_scroll.saturating_add(5),
+
+                        // Log Scrolling
+                        KeyCode::PageUp => log_scroll = log_scroll.saturating_sub(15),
+                        KeyCode::PageDown => log_scroll = log_scroll.saturating_add(15),
                         KeyCode::Home => log_scroll = 0,
-                        KeyCode::End => log_scroll = 2000, 
+                        KeyCode::End => log_scroll = 5000, 
                         _ => {}
                     }
                 }
