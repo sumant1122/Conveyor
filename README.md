@@ -3,10 +3,13 @@
 A lightweight, local-first CI/CD tool written in Rust with a modern, real-time Terminal User Interface (TUI).
 
 ## Features
+- **Stages & Jobs**: Group related jobs into stages for better organization and a clearer overview of your pipeline's progress.
+- **Build History & Persistence**: Automatically saves build results and logs to a local history, allowing you to review past performance and failures.
 - **Sequential by Default**: Jobs run one-by-one in the order defined in your pipeline, ensuring a predictable flow.
 - **Explicit Parallelism**: Use the `parallel: true` flag to run independent jobs concurrently.
 - **Dependency Tracking (DAG)**: Fine-tune execution order with the `needs` keyword for complex dependency graphs.
 - **Log Search & Filtering**: Quickly find errors or specific output with real-time log filtering (`/`).
+- **Pipeline Hooks**: Define `on_success` and `on_failure` commands to run after the pipeline completes.
 - **Responsive TUI**: A spacious, modern interface with OneDark colors that adapts to your terminal size.
 - **Git Integration**: Live display of current branch and latest commit info in the header.
 - **Environment Variables**: Support for pipeline-level, job-specific, and local `env.yaml` variables.
@@ -30,50 +33,52 @@ cargo build --release
    ```
 
 ### Navigation & Controls
-- **'1' / '2' / '3'**: Switch between **Dashboard**, **Pipeline Config**, and **Env Variables**.
+- **'1' / '2' / '3' / '4'**: Switch between **Dashboard**, **History**, **Pipeline Config**, and **Env Variables**.
 - **Up/Down Arrows**: Select a job in the Dashboard to view its logs.
+- **'R'**: **Retry** the current pipeline (resets states and starts fresh).
 - **'/'**: Enter **Search Mode** to filter logs in real-time.
 - **'Esc'**: Exit search mode or clear the current search query.
 - **'PgUp' / 'PgDn'**: Scroll through logs.
 - **'q'**: Quit the application.
 
 ## Pipeline Configuration (`pipeline.yaml`)
-Example `pipeline.yaml` demonstrating the execution model:
+Example `pipeline.yaml` using the modern **Stages** format:
 
 ```yaml
-name: Conveyor Build
-concurrency: 4  # Max number of total parallel jobs allowed
+name: Example Service
+on_success: "echo 'Success! Notifications sent.'"
+on_failure: "echo 'Build failed. Check history for details.'"
 
-jobs:
-  - name: Lint
-    steps:
-      - name: Check
-        command: cargo clippy
-        
+stages:
   - name: Build
-    # This runs ONLY after 'Lint' succeeds (Sequential default)
-    steps:
+    jobs:
       - name: Compile
-        command: cargo build
-        
-  - name: Unit Tests
-    # This runs ONLY after 'Build' succeeds (Sequential default)
-    steps:
-      - name: Tests
-        command: cargo test
+        steps:
+          - name: Build binary
+            command: cargo build --release
 
-  - name: Integration Tests
-    parallel: true # Runs immediately alongside other jobs
-    steps:
-      - name: Run
-        command: cargo test --test integration
+  - name: Test
+    jobs:
+      - name: Unit Tests
+        steps:
+          - name: Run pytest
+            command: pytest
+      - name: Integration Tests
+        parallel: true
+        steps:
+          - name: Run integration
+            command: npm test
 
   - name: Deploy
-    needs: ["Unit Tests", "Integration Tests"] # DAG: Runs only after both are successful
-    steps:
-      - name: Push
-        command: echo "Deploying..."
+    jobs:
+      - name: Push Image
+        needs: ["Unit Tests", "Integration Tests"]
+        steps:
+          - name: Docker Push
+            command: docker push my-app:latest
 ```
+
+*Note: The older flat `jobs:` format is still supported for backward compatibility.*
 
 ## Local Environment Variables (`env.yaml`)
 Store sensitive or machine-specific variables in an `env.yaml` file. These are automatically merged into all jobs.
