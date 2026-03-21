@@ -252,18 +252,34 @@ fn draw_footer(frame: &mut Frame, area: Rect, states: &[JobState]) {
     let failed = states.iter().filter(|s| s.status == JobStatus::Failed).count();
     let running = states.iter().filter(|s| s.status == JobStatus::Running).count();
 
-    let status_line = Line::from(vec![
-        " [q] Quit ".bold().red(),
-        " [1-3] View ".bold().blue(),
-        " [Up/Dn] Job ".bold().yellow(),
-        " [PgUp/Dn] Scroll ".bold().magenta(),
-        " | ".dim(),
-        format!(" {} OK ", success).green().bold(),
-        format!(" {} FAIL ", failed).red().bold(),
-        format!(" {} RUN ", running).yellow().bold(),
-    ]);
+    let mut spans = Vec::new();
+
+    // Responsive Help Keys
+    if area.width > 80 {
+        spans.push(" [q] Quit ".bold().red());
+        spans.push(" [1-3] View ".bold().blue());
+        spans.push(" [Up/Dn] Job ".bold().yellow());
+        spans.push(" [PgUp/Dn] Scroll ".bold().magenta());
+    } else if area.width > 40 {
+        spans.push(" [q] Quit ".bold().red());
+        spans.push(" [1-3] View ".bold().blue());
+    } else {
+        spans.push(" q:Quit ".bold().red());
+    }
+
+    spans.push(" | ".dim());
+
+    // Responsive Status Metrics
+    if area.width > 60 {
+        spans.push(format!(" {} OK ", success).green().bold());
+        spans.push(format!(" {} FAIL ", failed).red().bold());
+        spans.push(format!(" {} RUN ", running).yellow().bold());
+    } else {
+        spans.push(format!(" OK:{} ", success).green().bold());
+        spans.push(format!(" ERR:{} ", failed).red().bold());
+    }
     
-    let footer = Paragraph::new(status_line)
+    let footer = Paragraph::new(Line::from(spans))
         .bg(Color::Rgb(40, 44, 52))
         .alignment(Alignment::Left);
     frame.render_widget(footer, area);
