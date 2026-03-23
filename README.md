@@ -12,7 +12,8 @@ A lightweight, local-first CI/CD tool written in Rust with a modern, real-time T
 - **Pipeline Hooks**: Define `on_success` and `on_failure` commands to run after the pipeline completes.
 - **Responsive TUI**: A spacious, modern interface with OneDark colors that adapts to your terminal size.
 - **Git Integration**: Live display of current branch and latest commit info in the header.
-- **Environment Variables**: Support for pipeline-level, job-specific, and local `env.yaml` variables.
+- **Credential & Secret Management**: Declare required secrets in your pipeline. Conveyor will securely prompt for missing values at startup and automatically mask them (as `****`) in all TUI logs.
+- **Environment Variables**: Support for pipeline-level, job-specific, local `env.yaml` variables, and secure `secrets.yaml`.
 - **Cross-Platform**: Automatically selects the correct shell (`cmd` for Windows, `sh` for Linux/macOS).
 
 ## Installation
@@ -91,20 +92,36 @@ stages:
 
 *Note: The older flat `jobs:` format is still supported for backward compatibility.*
 
-## Local Environment Variables (`env.yaml`)
-Store sensitive or machine-specific variables in an `env.yaml` file. These are automatically merged into all jobs.
+## Local Environment Variables (`env.yaml` & `secrets.yaml`)
+Store sensitive or machine-specific variables in an `env.yaml` file. Use `secrets.yaml` for credentials; any value defined here will be **masked** in the TUI logs.
 
 Example `env.yaml`:
 ```yaml
-API_KEY: "your-secret-key"
 DEBUG: "true"
+LOG_LEVEL: "info"
 ```
+
+Example `secrets.yaml`:
+```yaml
+API_KEY: "my-very-secret-key"
+SSH_PRIVATE_KEY: |
+  -----BEGIN RSA PRIVATE KEY-----
+  ...
+```
+
+To enforce secret entry, add them to your `pipeline.yaml`:
+```yaml
+name: My Pipeline
+secrets:
+  - API_KEY
+  - DOCKER_PASSWORD
+```
+If these are not present in `secrets.yaml`, Conveyor will prompt for them securely at startup.
 
 ## Roadmap / Upcoming Enhancements
 To closely mirror the capabilities of professional CI systems like Jenkins, the following features are planned:
 
 - **📦 Artifact Management**: Capture and archive build outputs (binaries, test reports) for later retrieval directly from the TUI.
-- **🔒 Credential & Secret Management**: A secure, encrypted store for SSH keys and API tokens with automatic log masking (e.g., `****`).
 - **🎛️ Input Parameters**: Support for "Build with Parameters," allowing users to select options (like environment or version) before a pipeline starts.
 - **🏗️ Distributed Agents**: The ability to delegate jobs to remote machines via SSH or a custom agent protocol.
 - **⏲️ Triggering System**: Background daemon mode to poll Git repositories or listen for Webhooks to trigger builds automatically.
