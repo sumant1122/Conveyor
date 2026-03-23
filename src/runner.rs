@@ -30,12 +30,6 @@ pub struct JobState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StageState {
-    pub name: String,
-    pub status: JobStatus,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BuildRecord {
     pub id: u32,
     pub pipeline_name: String,
@@ -122,16 +116,18 @@ pub struct Runner {
     pub states: Arc<Mutex<Vec<JobState>>>,
     pub workspace: Arc<Mutex<Option<PathBuf>>>,
     pub user_env: std::collections::HashMap<String, String>,
+    pub secrets: std::collections::HashMap<String, String>,
+    pub mask_values: Vec<String>,
     pub history: HistoryManager,
     pub build_id: u32,
 }
 
 impl Runner {
-    pub fn new(pipeline: Pipeline, user_env: std::collections::HashMap<String, String>) -> Self {
+    pub fn new(pipeline: Pipeline, user_env: std::collections::HashMap<String, String>, secrets: std::collections::HashMap<String, String>) -> Self {
         let history = HistoryManager::new();
         let build_id = history.get_next_id();
         let mut states = Vec::new();
-        
+
         // Add a "Clone" job if a repository is specified
         if pipeline.repository.is_some() {
             states.push(JobState {
@@ -173,14 +169,40 @@ impl Runner {
             }
         }
 
+        let mut mask_values = secrets.values().cloned().collect::<Vec<_>>();
+        mask_values.retain(|v| !v.is_empty() && v.len() > 3);
+
         Self {
             pipeline: Arc::new(Mutex::new(pipeline)),
             states: Arc::new(Mutex::new(states)),
             workspace: Arc::new(Mutex::new(None)),
             user_env,
+            secrets,
+            mask_values,
             history,
             build_id,
         }
+    }
+
+    pub fn clone_for_spawn(&self) -> Self {
+        Self {
+            pipeline: self.pipeline.clone(),
+            states: self.states.clone(),
+            workspace: self.workspace.clone(),
+            user_env: self.user_env.clone(),
+            secrets: self.secrets.clone(),
+            mask_values: self.mask_values.clone(),
+            history: HistoryManager { root: self.history.root.clone() },
+            build_id: self.build_id,
+        }
+    }
+
+    fn mask_line(&self, line: String) -> String {
+        let mut result = line;
+        for mask in &self.mask_values {
+            result = result.replace(mask, "****");
+        }
+        result
     }
 
     pub async fn run(&self) {
@@ -233,7 +255,7 @@ impl Runner {
         }
     }
 
-    async fn internal_run(&self) {
+    pub async fn internal_run(&self) {
         // 1. Prepare Workspace
         let (repo_opt, branch_opt, on_failure_opt) = {
             let p = self.pipeline.lock().await;
@@ -388,42 +410,6 @@ impl Runner {
 
         let _ = self.save_to_history().await;
     }
-
-    async fn save_to_history(&self) -> anyhow::Result<()> {
-        let (pipeline_name, states) = {
-            let p = self.pipeline.lock().await;
-            let s = self.states.lock().await;
-            (p.name.clone(), s.clone())
-        };
-
-        let status = if states.iter().all(|s| s.status == JobStatus::Success) {
-            JobStatus::Success
-        } else {
-            JobStatus::Failed
-        };
-
-        let record = BuildRecord {
-            id: self.build_id,
-            pipeline_name,
-            timestamp: Local::now(),
-            status,
-            jobs: states,
-        };
-
-        self.history.save_build(&record)
-    }
-
-    fn clone_for_spawn(&self) -> Self {
-        Self {
-            pipeline: self.pipeline.clone(),
-            states: self.states.clone(),
-            workspace: self.workspace.clone(),
-            user_env: self.user_env.clone(),
-            history: HistoryManager { root: self.history.root.clone() },
-            build_id: self.build_id,
-        }
-    }
-
     async fn run_hook(&self, cmd_opt: &Option<String>, last_job_index: usize) -> bool {
         let cmd = match cmd_opt {
             Some(c) => c,
@@ -458,26 +444,30 @@ impl Runner {
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        let states_clone = self.states.clone();
         
-        let out_h = tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let mut states = states_clone.lock().await;
-                if let Some(state) = states.get_mut(last_job_index) {
-                    state.logs.push(line);
+        let out_h = tokio::spawn({
+            let _states_clone = self.states.clone();
+            let self_clone = self.clone_for_spawn();
+            async move {
+                let mut reader = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    let mut states = _states_clone.lock().await;
+                    if let Some(state) = states.get_mut(last_job_index) {
+                        state.logs.push(self_clone.mask_line(line));
+                    }
                 }
             }
         });
 
         let err_h = tokio::spawn({
-            let states_clone = self.states.clone();
+            let _states_clone = self.states.clone();
+            let self_clone = self.clone_for_spawn();
             async move {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    let mut states = states_clone.lock().await;
+                    let mut states = _states_clone.lock().await;
                     if let Some(state) = states.get_mut(last_job_index) {
-                        state.logs.push(line);
+                        state.logs.push(self_clone.mask_line(line));
                     }
                 }
             }
@@ -494,6 +484,30 @@ impl Runner {
         }
         
         success
+    }
+
+    pub async fn save_to_history(&self) -> anyhow::Result<()> {
+        let (pipeline_name, states) = {
+            let p = self.pipeline.lock().await;
+            let s = self.states.lock().await;
+            (p.name.clone(), s.clone())
+        };
+
+        let status = if states.iter().all(|s| s.status == JobStatus::Success) {
+            JobStatus::Success
+        } else {
+            JobStatus::Failed
+        };
+
+        let record = BuildRecord {
+            id: self.build_id,
+            pipeline_name,
+            timestamp: Local::now(),
+            status,
+            jobs: states,
+        };
+
+        self.history.save_build(&record)
     }
 
     async fn run_job(&self, index: usize, job: Job) {
@@ -544,6 +558,7 @@ impl Runner {
         }
         if let Some(env) = &job.env { cmd.envs(env); }
         cmd.envs(&self.user_env);
+        cmd.envs(&self.secrets);
 
         let mut child = match cmd.spawn() {
             Ok(c) => c,
@@ -556,23 +571,27 @@ impl Runner {
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        let states_clone = self.states.clone();
         
-        let out_h = tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let mut states = states_clone.lock().await;
-                states[index].logs.push(line);
+        let out_h = tokio::spawn({
+            let _states_clone = self.states.clone();
+            let self_clone = self.clone_for_spawn();
+            async move {
+                let mut reader = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    let mut states = _states_clone.lock().await;
+                    states[index].logs.push(self_clone.mask_line(line));
+                }
             }
         });
 
         let err_h = tokio::spawn({
-            let states_clone = self.states.clone();
+            let _states_clone = self.states.clone();
+            let self_clone = self.clone_for_spawn();
             async move {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    let mut states = states_clone.lock().await;
-                    states[index].logs.push(line);
+                    let mut states = _states_clone.lock().await;
+                    states[index].logs.push(self_clone.mask_line(line));
                 }
             }
         });
@@ -647,23 +666,26 @@ impl Runner {
         let stderr = child.stderr.take().unwrap();
         let states_clone = self.states.clone();
         
-        let out_handle = tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let mut states = states_clone.lock().await;
-                states[0].logs.push(line);
+        let out_handle = tokio::spawn({
+            let states_clone = self.states.clone();
+            let self_clone = self.clone_for_spawn();
+            async move {
+                let mut reader = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    let mut states = states_clone.lock().await;
+                    states[0].logs.push(self_clone.mask_line(line));
+                }
             }
         });
 
         let err_handle = tokio::spawn({
             let states_clone = self.states.clone();
+            let self_clone = self.clone_for_spawn();
             async move {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
                     let mut states = states_clone.lock().await;
-                    // Standard CLI tools often use stderr for progress info. 
-                    // We'll just log the line as is.
-                    states[0].logs.push(line);
+                    states[0].logs.push(self_clone.mask_line(line));
                 }
             }
         });

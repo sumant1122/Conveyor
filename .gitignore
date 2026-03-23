@@ -2,6 +2,8 @@
 /history/
 **/*.rs.bk
 Cargo.lock
+env.yaml
+secrets.yaml
 
 # IDEs
 .idea/

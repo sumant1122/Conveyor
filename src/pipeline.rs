@@ -7,6 +7,7 @@ pub struct Pipeline {
     pub repository: Option<String>,
     pub branch: Option<String>,
     pub env: Option<HashMap<String, String>>,
+    pub secrets: Option<Vec<String>>,
     pub on_success: Option<String>,
     pub on_failure: Option<String>,
     pub concurrency: Option<usize>,

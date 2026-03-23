@@ -26,6 +26,7 @@ pub enum AppView {
     History,
     Settings,
     EnvVars,
+    CredentialsPrompt,
 }
 
 impl AppView {
@@ -35,6 +36,7 @@ impl AppView {
             AppView::History => 1,
             AppView::Settings => 2,
             AppView::EnvVars => 3,
+            AppView::CredentialsPrompt => 4,
         }
     }
 
@@ -61,6 +63,8 @@ pub fn draw(
     search_query: &str,
     build_id: u32,
     history: &[crate::runner::BuildRecord],
+    prompt_secret_name: Option<&str>,
+    prompt_buffer: &str,
 ) {
     let area = frame.area();
     
@@ -82,9 +86,53 @@ pub fn draw(
         AppView::History => draw_history(frame, main_area, history),
         AppView::Settings => draw_settings(frame, main_area, pipeline),
         AppView::EnvVars => draw_env_vars(frame, main_area, user_env),
+        AppView::CredentialsPrompt => draw_credentials_prompt(frame, main_area, prompt_secret_name.unwrap_or(""), prompt_buffer),
     }
 
     draw_footer(frame, chunks[3], states, search_query);
+
+    if let AppView::CredentialsPrompt = current_view {
+        // We might want a modal instead of a full screen
+    }
+}
+
+fn draw_credentials_prompt(frame: &mut Frame, area: Rect, secret_name: &str, buffer: &str) {
+    let chunks = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(10),
+        Constraint::Min(0),
+    ]).split(area);
+    
+    let inner_chunks = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(60),
+        Constraint::Min(0),
+    ]).split(chunks[1]);
+
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(" ⟫ SECURE CREDENTIAL ENTRY ", Style::default().bold().fg(CLR_YELLOW)),
+        ]))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(CLR_YELLOW))
+        .padding(Padding::uniform(1));
+
+    let masked_input: String = "*".repeat(buffer.len());
+    
+    let content = vec![
+        Line::from(vec![Span::styled(format!("Missing required secret: "), Style::default().fg(CLR_FG))]),
+        Line::from(vec![Span::styled(secret_name, Style::default().bold().fg(CLR_CYAN))]),
+        Line::from(""),
+        Line::from(vec![Span::styled("Value: ", Style::default().fg(CLR_GRAY)), Span::styled(masked_input, Style::default().fg(CLR_GREEN))]),
+        Line::from(""),
+        Line::from(vec![Span::styled(" [Enter] Submit  [Esc] Skip ", Style::default().dim())]),
+    ];
+
+    let paragraph = Paragraph::new(content)
+        .block(block)
+        .alignment(Alignment::Center);
+
+    frame.render_widget(paragraph, inner_chunks[1]);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, pipeline_name: &str, git_info: &str, current_view: &AppView, build_id: u32) {
