@@ -11,6 +11,7 @@ A lightweight, local-first CI/CD tool written in Rust with a modern, real-time T
 - **Log Search & Filtering**: Quickly find errors or specific output with real-time log filtering (`/`).
 - **Pipeline Hooks**: Define `on_success` and `on_failure` commands to run after the pipeline completes.
 - **Responsive TUI**: A spacious, modern interface with OneDark colors that adapts to your terminal size.
+- **Headless Mode**: Run pipelines in a non-interactive mode with real-time log streaming to stdout. Ideal for AI agents, CI automation, and scripts.
 - **Git Integration**: Live display of current branch and latest commit info in the header.
 - **Credential & Secret Management**: Declare required secrets in your pipeline. Conveyor will securely prompt for missing values at startup and automatically mask them (as `****`) in all TUI logs.
 - **Environment Variables**: Support for pipeline-level, job-specific, local `env.yaml` variables, and secure `secrets.yaml`.
@@ -118,6 +119,17 @@ secrets:
 ```
 If these are not present in `secrets.yaml`, Conveyor will prompt for them securely at startup.
 
+### Headless Mode (for AI Agents & Automation)
+To run Conveyor without the TUI, use the `--headless` flag. This will stream all logs directly to stdout and exit with a proper status code (0 for success, 1 for failure).
+
+```bash
+# Run local pipeline
+cargo run -- --headless
+
+# Run remote repository
+cargo run -- https://github.com/user/repo.git --headless
+```
+
 ## Roadmap / Upcoming Enhancements
 To closely mirror the capabilities of professional CI systems like Jenkins, the following features are planned:
 
@@ -125,7 +137,6 @@ To closely mirror the capabilities of professional CI systems like Jenkins, the 
 - **🎛️ Input Parameters**: Support for "Build with Parameters," allowing users to select options (like environment or version) before a pipeline starts.
 - **🏗️ Distributed Agents**: The ability to delegate jobs to remote machines via SSH or a custom agent protocol.
 - **⏲️ Triggering System**: Background daemon mode to poll Git repositories or listen for Webhooks to trigger builds automatically.
-- **🤖 Headless Mode**: Optimized CLI output mode designed for AI agents and automated scripts, facilitating programmatic parsing and interaction without the TUI.
 
 ## License
 MIT

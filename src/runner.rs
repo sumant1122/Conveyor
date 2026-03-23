@@ -664,27 +664,26 @@ impl Runner {
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        let states_clone = self.states.clone();
         
         let out_handle = tokio::spawn({
-            let states_clone = self.states.clone();
+            let _states_clone = self.states.clone();
             let self_clone = self.clone_for_spawn();
             async move {
                 let mut reader = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    let mut states = states_clone.lock().await;
+                    let mut states = _states_clone.lock().await;
                     states[0].logs.push(self_clone.mask_line(line));
                 }
             }
         });
 
         let err_handle = tokio::spawn({
-            let states_clone = self.states.clone();
+            let _states_clone = self.states.clone();
             let self_clone = self.clone_for_spawn();
             async move {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    let mut states = states_clone.lock().await;
+                    let mut states = _states_clone.lock().await;
                     states[0].logs.push(self_clone.mask_line(line));
                 }
             }

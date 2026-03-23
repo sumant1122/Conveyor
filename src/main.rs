@@ -42,6 +42,66 @@ fn setup_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>> {
     Ok(Terminal::new(backend)?)
 }
 
+async fn run_headless(pipeline: Pipeline, user_env: std::collections::HashMap<String, String>, secrets: std::collections::HashMap<String, String>) -> anyhow::Result<()> {
+    use crate::runner::JobStatus;
+    
+    let runner = Arc::new(Runner::new(pipeline, user_env, secrets));
+    println!("🚀 Starting Conveyor in headless mode...");
+    println!("📋 Pipeline: {}", runner.pipeline.lock().await.name);
+    println!("-------------------------------------------");
+
+    let r_clone = runner.clone();
+    tokio::spawn(async move {
+        r_clone.run().await;
+    });
+
+    let mut last_log_indices: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut finished_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    loop {
+        let states = runner.states.lock().await.clone();
+        let mut all_finished = true;
+        let mut any_failed = false;
+
+        for state in &states {
+            let logs = &state.logs;
+            let last_idx = *last_log_indices.get(&state.name).unwrap_or(&0);
+
+            if last_idx < logs.len() {
+                for i in last_idx..logs.len() {
+                    println!("[{}] {}", state.name, logs[i]);
+                }
+                last_log_indices.insert(state.name.clone(), logs.len());
+            }
+
+            if state.status == JobStatus::Success || state.status == JobStatus::Failed {
+                if !finished_jobs.contains(&state.name) {
+                    println!("✅ Job '{}' finished with status: {:?}", state.name, state.status);
+                    finished_jobs.insert(state.name.clone());
+                }
+                if state.status == JobStatus::Failed {
+                    any_failed = true;
+                }
+            } else {
+                all_finished = false;
+            }
+        }
+
+        if all_finished && !states.is_empty() {
+            println!("-------------------------------------------");
+            if any_failed {
+                println!("❌ Pipeline FAILED");
+                std::process::exit(1);
+            } else {
+                println!("✨ Pipeline SUCCESS");
+                return Ok(());
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> anyhow::Result<()> {
     disable_raw_mode()?;
     execute!(
@@ -55,7 +115,9 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> any
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
+    let is_headless = args.iter().any(|a| a == "--headless");
+    args.retain(|a| a != "--headless");
     
     // Load user environment variables
     let env_content = tokio::fs::read_to_string("env.yaml")
@@ -117,6 +179,17 @@ jobs:
                 missing_secrets.push(s.clone());
             }
         }
+    }
+
+    // In headless mode, we can't prompt interactively via TUI
+    if is_headless && !missing_secrets.is_empty() {
+        eprintln!("Error: Missing required secrets in headless mode: {:?}", missing_secrets);
+        eprintln!("Please provide them in secrets.yaml or run without --headless once.");
+        std::process::exit(1);
+    }
+
+    if is_headless {
+        return run_headless(pipeline, user_env, secrets).await;
     }
 
     let git_info = if pipeline.repository.is_some() {
