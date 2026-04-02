@@ -3,6 +3,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
 use crate::pipeline::{Pipeline, Job, Step};
 use serde::{Serialize, Deserialize};
@@ -120,6 +121,7 @@ pub struct Runner {
     pub mask_values: Vec<String>,
     pub history: HistoryManager,
     pub build_id: u32,
+    pub cancel_token: CancellationToken,
 }
 
 impl Runner {
@@ -127,6 +129,7 @@ impl Runner {
         let history = HistoryManager::new();
         let build_id = history.get_next_id();
         let mut states = Vec::new();
+        let cancel_token = CancellationToken::new();
 
         // Add a "Clone" job if a repository is specified
         if pipeline.repository.is_some() {
@@ -171,6 +174,7 @@ impl Runner {
 
         let mut mask_values = secrets.values().cloned().collect::<Vec<_>>();
         mask_values.retain(|v| !v.is_empty() && v.len() > 3);
+        mask_values.sort_by(|a, b| b.len().cmp(&a.len()));
 
         Self {
             pipeline: Arc::new(Mutex::new(pipeline)),
@@ -181,6 +185,7 @@ impl Runner {
             mask_values,
             history,
             build_id,
+            cancel_token,
         }
     }
 
@@ -194,6 +199,7 @@ impl Runner {
             mask_values: self.mask_values.clone(),
             history: HistoryManager { root: self.history.root.clone() },
             build_id: self.build_id,
+            cancel_token: self.cancel_token.clone(),
         }
     }
 
@@ -341,6 +347,9 @@ impl Runner {
 
         // 2. Run Jobs
         while completed_jobs.len() < (total_jobs + if has_repo { 1 } else { 0 }) {
+            if self.cancel_token.is_cancelled() {
+                break;
+            }
             // Get jobs that ARE NOT running, NOT completed, and have their requirements met
             let jobs_to_run: Vec<(usize, Job)> = {
                 let p = self.pipeline.lock().await;
@@ -378,7 +387,10 @@ impl Runner {
                 });
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(50)) => {}
+                _ = self.cancel_token.cancelled() => { break; }
+            }
             
             let states = self.states.lock().await;
             for state in states.iter() {
@@ -473,8 +485,21 @@ impl Runner {
             }
         });
 
-        let success = child.wait().await.map(|s| s.success()).unwrap_or(false);
+        let cancel = self.cancel_token.clone();
+        let status = tokio::select! {
+            r = child.wait() => Some(r),
+            _ = cancel.cancelled() => {
+                let _ = child.kill().await;
+                None
+            }
+        };
+
         let _ = tokio::join!(out_h, err_h);
+        
+        let success = match status {
+            Some(Ok(s)) => s.success(),
+            _ => false,
+        };
         
         {
             let mut states = self.states.lock().await;
@@ -596,13 +621,25 @@ impl Runner {
             }
         });
 
-        let status = child.wait().await;
-        let success = status.as_ref().map(|s| s.success()).unwrap_or(false);
+        let cancel = self.cancel_token.clone();
+        let status = tokio::select! {
+            r = child.wait() => Some(r),
+            _ = cancel.cancelled() => {
+                let _ = child.kill().await;
+                None
+            }
+        };
+
         let _ = tokio::join!(out_h, err_h);
+
+        let success = match &status {
+            Some(Ok(s)) => s.success(),
+            _ => false,
+        };
 
         if !success {
             let mut states = self.states.lock().await;
-            if let Ok(s) = status {
+            if let Some(Ok(s)) = status {
                 if let Some(code) = s.code() {
                     if cfg!(target_os = "windows") && code == 9009 {
                         states[index].logs.push("Error: Command not found (9009). Ensure 'uv' or 'python' is in your PATH.".to_string());
@@ -612,6 +649,8 @@ impl Runner {
                 } else {
                     states[index].logs.push("Step failed (terminated by signal).".to_string());
                 }
+            } else if status.is_none() {
+                states[index].logs.push("Step cancelled by user.".to_string());
             } else {
                 states[index].logs.push("Step failed (unknown error).".to_string());
             }
@@ -637,11 +676,11 @@ impl Runner {
             return true;
         }
 
-        let workspace_path = PathBuf::from("target/workspace");
+        let workspace_path = PathBuf::from(format!("target/workspace_{}", self.build_id));
         if workspace_path.exists() {
             if let Err(e) = tokio::fs::remove_dir_all(&workspace_path).await {
                 let mut states = self.states.lock().await;
-                states[0].logs.push(format!("Warning: Could not clear workspace: {}. Try closing open files in target/workspace.", e));
+                states[0].logs.push(format!("Warning: Could not clear workspace: {}. Try closing open files.", e));
             }
         }
         
@@ -649,7 +688,7 @@ impl Runner {
         let _ = tokio::fs::create_dir_all("target").await;
 
         let mut child = match Command::new("git")
-            .args(["clone", "--depth", "1", "--branch", branch, repo, "target/workspace"])
+            .args(["clone", "--depth", "1", "--branch", branch, repo, &format!("target/workspace_{}", self.build_id)])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn() {
@@ -689,8 +728,20 @@ impl Runner {
             }
         });
 
-        let success = child.wait().await.map(|s| s.success()).unwrap_or(false);
+        let cancel = self.cancel_token.clone();
+        let status = tokio::select! {
+            r = child.wait() => Some(r),
+            _ = cancel.cancelled() => {
+                let _ = child.kill().await;
+                None
+            }
+        };
         let _ = tokio::join!(out_handle, err_handle);
+
+        let success = match status {
+            Some(Ok(s)) => s.success(),
+            _ => false,
+        };
 
         let mut states = self.states.lock().await;
         if success {

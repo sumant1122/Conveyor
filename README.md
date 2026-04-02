@@ -16,6 +16,8 @@ A lightweight, local-first CI/CD tool written in Rust with a modern, real-time T
 - **Credential & Secret Management**: Declare required secrets in your pipeline. Conveyor will securely prompt for missing values at startup and automatically mask them (as `****`) in all TUI logs.
 - **Environment Variables**: Support for pipeline-level, job-specific, local `env.yaml` variables, and secure `secrets.yaml`.
 - **Cross-Platform**: Automatically selects the correct shell (`cmd` for Windows, `sh` for Linux/macOS).
+- **Graceful Process Termination**: Safely cancels running jobs and cleans up orphaned compilation processes instantly when quitting (`Q`) or retrying (`R`).
+- **Isolated Workspaces**: Remote pipelines clone into dynamically generated, globally unique directories to prevent file locking and stomping collisions.
 
 ## Installation
 Ensure you have the Rust toolchain installed.

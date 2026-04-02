@@ -237,34 +237,51 @@ jobs:
     let mut last_log_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
     loop {
-        let mut states = Vec::new();
-        let mut pipeline_config = pipeline.clone();
         let mut current_build_id = 0;
-        let mut history_records = Vec::new();
+        let history_records = if current_view == AppView::History {
+            if let Some(r) = &runner { r.history.load_history() } else { Vec::new() }
+        } else {
+            Vec::new()
+        };
+
+        let states_guard;
+        let pipeline_guard;
+        let states_ref: &[crate::runner::JobState];
+        let p_name: String;
+        let p_config: Pipeline;
 
         if let Some(r) = &runner {
-            let s = r.states.lock().await;
+            let states = r.states.lock().await;
             let p = r.pipeline.lock().await;
-            states = s.clone();
-            pipeline_config = p.clone();
-            current_build_id = r.build_id;
-            history_records = r.history.load_history();
-        }
-
-        // Auto-scroll logic
-        if let Some(state) = states.get(selected_job) {
-            let current_count = state.logs.len();
-            let last_count = *last_log_counts.get(&selected_job).unwrap_or(&0);
             
-            if current_count > last_count {
-                if log_scroll + 20 >= last_count as u16 {
-                    log_scroll = u16::MAX;
+            if let Some(state) = states.get(selected_job) {
+                let current_count = state.logs.len();
+                let last_count = *last_log_counts.get(&selected_job).unwrap_or(&0);
+                
+                if current_count > last_count {
+                    if log_scroll + 20 >= last_count as u16 {
+                        log_scroll = u16::MAX;
+                    }
+                    last_log_counts.insert(selected_job, current_count);
                 }
-                last_log_counts.insert(selected_job, current_count);
             }
+
+            p_name = p.name.clone();
+            p_config = p.clone();
+            current_build_id = r.build_id;
+            
+            states_guard = Some(states);
+            pipeline_guard = Some(p);
+            states_ref = states_guard.as_ref().unwrap().as_slice();
+        } else {
+            states_guard = None;
+            pipeline_guard = None;
+            states_ref = &[];
+            p_name = pipeline.name.clone();
+            p_config = pipeline.clone();
         }
 
-        if pipeline_config.repository.is_none() && git_update_tick.elapsed() >= Duration::from_secs(5) {
+        if p_config.repository.is_none() && git_update_tick.elapsed() >= Duration::from_secs(5) {
              current_git_info = get_git_info();
              git_update_tick = Instant::now();
         }
@@ -273,12 +290,12 @@ jobs:
 
         terminal.draw(|f| ui::draw(
             f, 
-            &states, 
+            states_ref, 
             selected_job, 
             &current_git_info, 
-            &pipeline_config.name, 
+            &p_name, 
             &current_view, 
-            &pipeline_config, 
+            &p_config, 
             &user_env_ui,
             &mut log_scroll,
             &search_query,
@@ -287,6 +304,10 @@ jobs:
             prompt_name,
             &prompt_buffer,
         ))?;
+
+        let states_len = states_ref.len();
+        drop(states_guard);
+        drop(pipeline_guard);
 
         let timeout = tick_rate
             .checked_sub(last_tick.elapsed())
@@ -357,7 +378,12 @@ jobs:
                     }
                 } else {
                     match key.code {
-                        KeyCode::Char('q') => break,
+                        KeyCode::Char('q') => {
+                            if let Some(r) = &runner {
+                                r.cancel_token.cancel();
+                            }
+                            break;
+                        }
                         KeyCode::Char('/') => {
                             is_searching = true;
                             search_query.clear();
@@ -369,6 +395,7 @@ jobs:
                         KeyCode::Char('4') => current_view = AppView::EnvVars,
                         KeyCode::Char('r') => {
                             if let Some(r) = &runner {
+                                r.cancel_token.cancel();
                                 let r_clone = r.clone();
                                 tokio::spawn(async move {
                                     r_clone.reset().await;
@@ -383,7 +410,7 @@ jobs:
                             }
                         }
                         KeyCode::Down | KeyCode::Char('j') if current_view == AppView::Dashboard => {
-                            if !states.is_empty() && selected_job < states.len() - 1 {
+                            if selected_job < states_len.saturating_sub(1) {
                                 selected_job += 1;
                                 log_scroll = 0;
                             }
