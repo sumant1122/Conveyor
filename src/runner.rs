@@ -66,7 +66,10 @@ impl HistoryManager {
         if let Ok(entries) = std::fs::read_dir(&self.root) {
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
-                    if let Some(id) = name.strip_prefix("build_").and_then(|s| s.parse::<u32>().ok()) {
+                    if let Some(id) = name
+                        .strip_prefix("build_")
+                        .and_then(|s| s.parse::<u32>().ok())
+                    {
                         max_id = max_id.max(id);
                     }
                 }

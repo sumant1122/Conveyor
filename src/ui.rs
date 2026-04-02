@@ -145,8 +145,14 @@ fn draw_credentials_prompt(frame: &mut Frame, area: Rect, secret_name: &str, buf
     let masked_input: String = "*".repeat(buffer.len());
 
     let content = vec![
-        Line::from(vec![Span::styled("Missing required secret: ".to_string(), Style::default().fg(CLR_FG))]),
-        Line::from(vec![Span::styled(secret_name, Style::default().bold().fg(CLR_CYAN))]),
+        Line::from(vec![Span::styled(
+            "Missing required secret: ".to_string(),
+            Style::default().fg(CLR_FG),
+        )]),
+        Line::from(vec![Span::styled(
+            secret_name,
+            Style::default().bold().fg(CLR_CYAN),
+        )]),
         Line::from(""),
         Line::from(vec![
             Span::styled("Value: ", Style::default().fg(CLR_GRAY)),
