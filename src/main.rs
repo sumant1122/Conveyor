@@ -7,14 +7,14 @@ use crate::runner::Runner;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io;
-use std::time::{Duration, Instant};
-use std::process::Command;
+use ratatui::{Terminal, backend::CrosstermBackend};
 use std::env;
+use std::io;
+use std::process::Command;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 fn get_git_info() -> String {
     let branch = Command::new("git")
@@ -42,9 +42,13 @@ fn setup_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>> {
     Ok(Terminal::new(backend)?)
 }
 
-async fn run_headless(pipeline: Pipeline, user_env: std::collections::HashMap<String, String>, secrets: std::collections::HashMap<String, String>) -> anyhow::Result<()> {
+async fn run_headless(
+    pipeline: Pipeline,
+    user_env: std::collections::HashMap<String, String>,
+    secrets: std::collections::HashMap<String, String>,
+) -> anyhow::Result<()> {
     use crate::runner::JobStatus;
-    
+
     let runner = Arc::new(Runner::new(pipeline, user_env, secrets));
     println!("🚀 Starting Conveyor in headless mode...");
     println!("📋 Pipeline: {}", runner.pipeline.lock().await.name);
@@ -55,7 +59,8 @@ async fn run_headless(pipeline: Pipeline, user_env: std::collections::HashMap<St
         r_clone.run().await;
     });
 
-    let mut last_log_indices: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut last_log_indices: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut finished_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     loop {
@@ -76,7 +81,10 @@ async fn run_headless(pipeline: Pipeline, user_env: std::collections::HashMap<St
 
             if state.status == JobStatus::Success || state.status == JobStatus::Failed {
                 if !finished_jobs.contains(&state.name) {
-                    println!("✅ Job '{}' finished with status: {:?}", state.name, state.status);
+                    println!(
+                        "✅ Job '{}' finished with status: {:?}",
+                        state.name, state.status
+                    );
                     finished_jobs.insert(state.name.clone());
                 }
                 if state.status == JobStatus::Failed {
@@ -118,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
     let mut args: Vec<String> = env::args().collect();
     let is_headless = args.iter().any(|a| a == "--headless");
     args.retain(|a| a != "--headless");
-    
+
     // Load user environment variables
     let env_content = tokio::fs::read_to_string("env.yaml")
         .await
@@ -127,7 +135,8 @@ async fn main() -> anyhow::Result<()> {
             std::fs::write("env.yaml", default).unwrap();
             default.to_string()
         });
-    let user_env: std::collections::HashMap<String, String> = serde_yaml::from_str(&env_content).unwrap_or_default();
+    let user_env: std::collections::HashMap<String, String> =
+        serde_yaml::from_str(&env_content).unwrap_or_default();
 
     // Load secrets
     let secrets_content = tokio::fs::read_to_string("secrets.yaml")
@@ -137,7 +146,8 @@ async fn main() -> anyhow::Result<()> {
             std::fs::write("secrets.yaml", default).unwrap();
             default.to_string()
         });
-    let mut secrets: std::collections::HashMap<String, String> = serde_yaml::from_str(&secrets_content).unwrap_or_default();
+    let mut secrets: std::collections::HashMap<String, String> =
+        serde_yaml::from_str(&secrets_content).unwrap_or_default();
 
     let pipeline = if args.len() > 1 {
         Pipeline {
@@ -183,7 +193,10 @@ jobs:
 
     // In headless mode, we can't prompt interactively via TUI
     if is_headless && !missing_secrets.is_empty() {
-        eprintln!("Error: Missing required secrets in headless mode: {:?}", missing_secrets);
+        eprintln!(
+            "Error: Missing required secrets in headless mode: {:?}",
+            missing_secrets
+        );
         eprintln!("Please provide them in secrets.yaml or run without --headless once.");
         std::process::exit(1);
     }
@@ -212,7 +225,11 @@ jobs:
     let mut runner_started = false;
 
     if missing_secrets.is_empty() {
-        let r = Arc::new(Runner::new(pipeline.clone(), user_env.clone(), secrets.clone()));
+        let r = Arc::new(Runner::new(
+            pipeline.clone(),
+            user_env.clone(),
+            secrets.clone(),
+        ));
         let r_spawn = r.clone();
         tokio::spawn(async move {
             r_spawn.run().await;
@@ -230,16 +247,21 @@ jobs:
 
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
-    
+
     let mut current_git_info = git_info;
     let mut git_update_tick = Instant::now();
 
-    let mut last_log_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut last_log_counts: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
 
     loop {
         let mut current_build_id = 0;
         let history_records = if current_view == AppView::History {
-            if let Some(r) = &runner { r.history.load_history() } else { Vec::new() }
+            if let Some(r) = &runner {
+                r.history.load_history()
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         };
@@ -253,11 +275,11 @@ jobs:
         if let Some(r) = &runner {
             let states = r.states.lock().await;
             let p = r.pipeline.lock().await;
-            
+
             if let Some(state) = states.get(selected_job) {
                 let current_count = state.logs.len();
                 let last_count = *last_log_counts.get(&selected_job).unwrap_or(&0);
-                
+
                 if current_count > last_count {
                     if log_scroll + 20 >= last_count as u16 {
                         log_scroll = u16::MAX;
@@ -269,7 +291,7 @@ jobs:
             p_name = p.name.clone();
             p_config = p.clone();
             current_build_id = r.build_id;
-            
+
             states_guard = Some(states);
             pipeline_guard = Some(p);
             states_ref = states_guard.as_ref().unwrap().as_slice();
@@ -282,28 +304,32 @@ jobs:
         }
 
         if p_config.repository.is_none() && git_update_tick.elapsed() >= Duration::from_secs(5) {
-             current_git_info = get_git_info();
-             git_update_tick = Instant::now();
+            current_git_info = get_git_info();
+            git_update_tick = Instant::now();
         }
 
-        let prompt_name = missing_secrets.get(current_missing_index).map(|s| s.as_str());
+        let prompt_name = missing_secrets
+            .get(current_missing_index)
+            .map(|s| s.as_str());
 
-        terminal.draw(|f| ui::draw(
-            f, 
-            states_ref, 
-            selected_job, 
-            &current_git_info, 
-            &p_name, 
-            &current_view, 
-            &p_config, 
-            &user_env_ui,
-            &mut log_scroll,
-            &search_query,
-            current_build_id,
-            &history_records,
-            prompt_name,
-            &prompt_buffer,
-        ))?;
+        terminal.draw(|f| {
+            ui::draw(
+                f,
+                states_ref,
+                selected_job,
+                &current_git_info,
+                &p_name,
+                &current_view,
+                &p_config,
+                &user_env_ui,
+                &mut log_scroll,
+                &search_query,
+                current_build_id,
+                &history_records,
+                prompt_name,
+                &prompt_buffer,
+            )
+        })?;
 
         let states_len = states_ref.len();
         drop(states_guard);
@@ -315,7 +341,7 @@ jobs:
 
         if event::poll(timeout)? {
             let ev = event::read()?;
-            
+
             if let Event::Mouse(mouse) = ev {
                 match mouse.kind {
                     event::MouseEventKind::ScrollUp => log_scroll = log_scroll.saturating_sub(3),
@@ -335,7 +361,11 @@ jobs:
                                 if current_missing_index >= missing_secrets.len() {
                                     current_view = AppView::Dashboard;
                                     // Start runner
-                                    let r = Arc::new(Runner::new(pipeline.clone(), user_env.clone(), secrets.clone()));
+                                    let r = Arc::new(Runner::new(
+                                        pipeline.clone(),
+                                        user_env.clone(),
+                                        secrets.clone(),
+                                    ));
                                     let r_spawn = r.clone();
                                     tokio::spawn(async move {
                                         r_spawn.run().await;
@@ -351,7 +381,11 @@ jobs:
                             if current_missing_index >= missing_secrets.len() {
                                 current_view = AppView::Dashboard;
                                 if !runner_started {
-                                    let r = Arc::new(Runner::new(pipeline.clone(), user_env.clone(), secrets.clone()));
+                                    let r = Arc::new(Runner::new(
+                                        pipeline.clone(),
+                                        user_env.clone(),
+                                        secrets.clone(),
+                                    ));
                                     let r_spawn = r.clone();
                                     tokio::spawn(async move {
                                         r_spawn.run().await;
@@ -372,8 +406,12 @@ jobs:
                 } else if is_searching {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => is_searching = false,
-                        KeyCode::Backspace => { search_query.pop(); }
-                        KeyCode::Char(c) => { search_query.push(c); }
+                        KeyCode::Backspace => {
+                            search_query.pop();
+                        }
+                        KeyCode::Char(c) => {
+                            search_query.push(c);
+                        }
                         _ => {}
                     }
                 } else {
@@ -409,7 +447,9 @@ jobs:
                                 log_scroll = 0;
                             }
                         }
-                        KeyCode::Down | KeyCode::Char('j') if current_view == AppView::Dashboard => {
+                        KeyCode::Down | KeyCode::Char('j')
+                            if current_view == AppView::Dashboard =>
+                        {
                             if selected_job < states_len.saturating_sub(1) {
                                 selected_job += 1;
                                 log_scroll = 0;
@@ -418,7 +458,7 @@ jobs:
                         KeyCode::PageUp => log_scroll = log_scroll.saturating_sub(15),
                         KeyCode::PageDown => log_scroll = log_scroll.saturating_add(15),
                         KeyCode::Home => log_scroll = 0,
-                        KeyCode::End => log_scroll = u16::MAX, 
+                        KeyCode::End => log_scroll = u16::MAX,
                         _ => {}
                     }
                 }

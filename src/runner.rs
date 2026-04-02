@@ -1,14 +1,14 @@
+use crate::pipeline::{Job, Pipeline, Step};
+use chrono::{DateTime, Local};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use std::sync::Arc;
-use crate::pipeline::{Pipeline, Job, Step};
-use serde::{Serialize, Deserialize};
-use std::path::PathBuf;
-use chrono::{DateTime, Local};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum JobStatus {
@@ -125,7 +125,11 @@ pub struct Runner {
 }
 
 impl Runner {
-    pub fn new(pipeline: Pipeline, user_env: std::collections::HashMap<String, String>, secrets: std::collections::HashMap<String, String>) -> Self {
+    pub fn new(
+        pipeline: Pipeline,
+        user_env: std::collections::HashMap<String, String>,
+        secrets: std::collections::HashMap<String, String>,
+    ) -> Self {
         let history = HistoryManager::new();
         let build_id = history.get_next_id();
         let mut states = Vec::new();
@@ -197,7 +201,9 @@ impl Runner {
             user_env: self.user_env.clone(),
             secrets: self.secrets.clone(),
             mask_values: self.mask_values.clone(),
-            history: HistoryManager { root: self.history.root.clone() },
+            history: HistoryManager {
+                root: self.history.root.clone(),
+            },
             build_id: self.build_id,
             cancel_token: self.cancel_token.clone(),
         }
@@ -218,7 +224,7 @@ impl Runner {
     pub async fn reset(&self) {
         let mut states = self.states.lock().await;
         let p = self.pipeline.lock().await;
-        
+
         states.clear();
         if p.repository.is_some() {
             states.push(JobState {
@@ -274,7 +280,7 @@ impl Runner {
                 let _ = self.run_hook(&on_failure_opt, 0).await;
                 return;
             }
-            
+
             // AFTER CLONE: Dynamically load pipeline.yaml from the workspace
             let ws_opt = {
                 let ws = self.workspace.lock().await;
@@ -291,18 +297,20 @@ impl Runner {
                             new_pipeline.repository = p.repository.clone();
                             new_pipeline.branch = p.branch.clone();
                             *p = new_pipeline;
-                            
+
                             // Re-initialize states with the new jobs
                             let mut states = self.states.lock().await;
                             // Keep the first state (Clone Workspace) if it was successful
                             let clone_state = states[0].clone();
                             states.clear();
                             states.push(clone_state);
-                            
+
                             if let Some(stages) = &p.stages {
                                 for stage in stages {
                                     for j in &stage.jobs {
-                                        if j.name == "Clone Workspace" { continue; }
+                                        if j.name == "Clone Workspace" {
+                                            continue;
+                                        }
                                         states.push(JobState {
                                             name: j.name.clone(),
                                             stage_name: stage.name.clone(),
@@ -316,7 +324,9 @@ impl Runner {
                                 }
                             } else if let Some(jobs) = &p.jobs {
                                 for j in jobs {
-                                    if j.name == "Clone Workspace" { continue; }
+                                    if j.name == "Clone Workspace" {
+                                        continue;
+                                    }
                                     states.push(JobState {
                                         name: j.name.clone(),
                                         stage_name: "Jobs".to_string(),
@@ -336,9 +346,13 @@ impl Runner {
 
         let (total_jobs, has_repo, concurrency_limit) = {
             let p = self.pipeline.lock().await;
-            (p.get_all_jobs().len(), p.repository.is_some(), p.concurrency.unwrap_or(4))
+            (
+                p.get_all_jobs().len(),
+                p.repository.is_some(),
+                p.concurrency.unwrap_or(4),
+            )
         };
-        
+
         let mut completed_jobs = HashSet::new();
         if has_repo {
             completed_jobs.insert("Clone Workspace".to_string());
@@ -354,21 +368,23 @@ impl Runner {
             let jobs_to_run: Vec<(usize, Job)> = {
                 let p = self.pipeline.lock().await;
                 let all_jobs = p.get_all_jobs();
-                all_jobs.into_iter().enumerate()
+                all_jobs
+                    .into_iter()
+                    .enumerate()
                     .filter(|(i, j)| {
                         if running_jobs.contains(&j.name) || completed_jobs.contains(&j.name) {
                             return false;
                         }
 
                         if let Some(needs) = &j.needs {
-                             needs.iter().all(|n| completed_jobs.contains(n))
+                            needs.iter().all(|n| completed_jobs.contains(n))
                         } else if j.parallel == Some(true) {
-                             true
+                            true
                         } else if *i > 0 {
-                             let prev_job_name = &p.get_all_jobs()[*i-1].name;
-                             completed_jobs.contains(prev_job_name)
+                            let prev_job_name = &p.get_all_jobs()[*i - 1].name;
+                            completed_jobs.contains(prev_job_name)
                         } else {
-                             true
+                            true
                         }
                     })
                     .map(|(i, j)| (i + if has_repo { 1 } else { 0 }, j))
@@ -379,7 +395,7 @@ impl Runner {
                 if running_jobs.len() >= concurrency_limit {
                     break;
                 }
-                
+
                 running_jobs.insert(job.name.clone());
                 let self_clone = Arc::new(self.clone_for_spawn());
                 tokio::spawn(async move {
@@ -391,11 +407,12 @@ impl Runner {
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(50)) => {}
                 _ = self.cancel_token.cancelled() => { break; }
             }
-            
+
             let states = self.states.lock().await;
             for state in states.iter() {
-                if (state.status == JobStatus::Success || state.status == JobStatus::Failed) 
-                    && !completed_jobs.contains(&state.name) {
+                if (state.status == JobStatus::Success || state.status == JobStatus::Failed)
+                    && !completed_jobs.contains(&state.name)
+                {
                     completed_jobs.insert(state.name.clone());
                     running_jobs.remove(&state.name);
                 }
@@ -407,10 +424,10 @@ impl Runner {
             let states = self.states.lock().await;
             let p = self.pipeline.lock().await;
             (
-                states.iter().all(|s| s.status == JobStatus::Success), 
-                p.on_success.clone(), 
+                states.iter().all(|s| s.status == JobStatus::Success),
+                p.on_success.clone(),
                 p.on_failure.clone(),
-                states.len().saturating_sub(1)
+                states.len().saturating_sub(1),
             )
         };
 
@@ -433,11 +450,20 @@ impl Runner {
             if let Some(state) = states.get_mut(last_job_index) {
                 state.logs.push("".to_string());
                 state.logs.push("━".repeat(40).dim().to_string());
-                state.logs.push(format!("⟫ Executing Pipeline Hook: {}", cmd).bold().blue().to_string());
+                state.logs.push(
+                    format!("⟫ Executing Pipeline Hook: {}", cmd)
+                        .bold()
+                        .blue()
+                        .to_string(),
+                );
             }
         }
 
-        let (shell, flag) = if cfg!(target_os = "windows") { ("cmd", "/C") } else { ("sh", "-c") };
+        let (shell, flag) = if cfg!(target_os = "windows") {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
         let mut command = Command::new(shell);
         command.args([flag, cmd]);
         let ws_opt = {
@@ -447,7 +473,7 @@ impl Runner {
         if let Some(ws) = ws_opt {
             command.current_dir(ws);
         }
-        
+
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = match command.spawn() {
             Ok(c) => c,
@@ -456,7 +482,7 @@ impl Runner {
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        
+
         let out_h = tokio::spawn({
             let _states_clone = self.states.clone();
             let self_clone = self.clone_for_spawn();
@@ -495,19 +521,24 @@ impl Runner {
         };
 
         let _ = tokio::join!(out_h, err_h);
-        
+
         let success = match status {
             Some(Ok(s)) => s.success(),
             _ => false,
         };
-        
+
         {
             let mut states = self.states.lock().await;
             if let Some(state) = states.get_mut(last_job_index) {
-                state.logs.push(format!("⟫ Hook finished with success: {}", success).bold().dim().to_string());
+                state.logs.push(
+                    format!("⟫ Hook finished with success: {}", success)
+                        .bold()
+                        .dim()
+                        .to_string(),
+                );
             }
         }
-        
+
         success
     }
 
@@ -542,7 +573,9 @@ impl Runner {
             states[index].status = JobStatus::Running;
             states[index].start_time = Some(start);
             states[index].start_timestamp = Some(Local::now());
-            states[index].logs.push(format!("Starting job: {}", job.name));
+            states[index]
+                .logs
+                .push(format!("Starting job: {}", job.name));
         }
 
         let mut success = true;
@@ -554,20 +587,33 @@ impl Runner {
         }
 
         let mut states = self.states.lock().await;
-        states[index].status = if success { JobStatus::Success } else { JobStatus::Failed };
+        states[index].status = if success {
+            JobStatus::Success
+        } else {
+            JobStatus::Failed
+        };
         states[index].duration = Some(start.elapsed());
     }
 
     async fn run_step(&self, index: usize, step: Step, job: &Job) -> bool {
         {
             let mut states = self.states.lock().await;
-            states[index].logs.push(format!(">> Running step: {}", step.name).bold().cyan().to_string());
+            states[index].logs.push(
+                format!(">> Running step: {}", step.name)
+                    .bold()
+                    .cyan()
+                    .to_string(),
+            );
         }
-        let (shell, flag) = if cfg!(target_os = "windows") { ("cmd", "/C") } else { ("sh", "-c") };
+        let (shell, flag) = if cfg!(target_os = "windows") {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
         let mut cmd = Command::new(shell);
         cmd.args([flag, &step.command])
-           .stdout(Stdio::piped())
-           .stderr(Stdio::piped());
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         let ws_opt = {
             let ws = self.workspace.lock().await;
@@ -579,9 +625,13 @@ impl Runner {
 
         {
             let p = self.pipeline.lock().await;
-            if let Some(env) = &p.env { cmd.envs(env); }
+            if let Some(env) = &p.env {
+                cmd.envs(env);
+            }
         }
-        if let Some(env) = &job.env { cmd.envs(env); }
+        if let Some(env) = &job.env {
+            cmd.envs(env);
+        }
         cmd.envs(&self.user_env);
         cmd.envs(&self.secrets);
 
@@ -589,14 +639,16 @@ impl Runner {
             Ok(c) => c,
             Err(e) => {
                 let mut states = self.states.lock().await;
-                states[index].logs.push(format!("Failed to spawn command: {}", e));
+                states[index]
+                    .logs
+                    .push(format!("Failed to spawn command: {}", e));
                 return false;
             }
         };
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        
+
         let out_h = tokio::spawn({
             let _states_clone = self.states.clone();
             let self_clone = self.clone_for_spawn();
@@ -644,15 +696,23 @@ impl Runner {
                     if cfg!(target_os = "windows") && code == 9009 {
                         states[index].logs.push("Error: Command not found (9009). Ensure 'uv' or 'python' is in your PATH.".to_string());
                     } else {
-                        states[index].logs.push(format!("Step failed with exit code: {}", code));
+                        states[index]
+                            .logs
+                            .push(format!("Step failed with exit code: {}", code));
                     }
                 } else {
-                    states[index].logs.push("Step failed (terminated by signal).".to_string());
+                    states[index]
+                        .logs
+                        .push("Step failed (terminated by signal).".to_string());
                 }
             } else if status.is_none() {
-                states[index].logs.push("Step cancelled by user.".to_string());
+                states[index]
+                    .logs
+                    .push("Step cancelled by user.".to_string());
             } else {
-                states[index].logs.push("Step failed (unknown error).".to_string());
+                states[index]
+                    .logs
+                    .push("Step failed (unknown error).".to_string());
             }
         }
         success
@@ -662,14 +722,18 @@ impl Runner {
         {
             let mut states = self.states.lock().await;
             states[0].status = JobStatus::Running;
-            states[0].logs.push(format!("Preparing workspace for {}...", repo));
+            states[0]
+                .logs
+                .push(format!("Preparing workspace for {}...", repo));
         }
 
         // If repo is a local path that exists, just use it
         let repo_path = std::path::Path::new(repo);
         if repo_path.exists() && repo_path.is_dir() {
             let mut states = self.states.lock().await;
-            states[0].logs.push(format!("Using local directory: {}", repo));
+            states[0]
+                .logs
+                .push(format!("Using local directory: {}", repo));
             states[0].status = JobStatus::Success;
             let mut ws = self.workspace.lock().await;
             *ws = Some(repo_path.to_path_buf());
@@ -680,30 +744,45 @@ impl Runner {
         if workspace_path.exists() {
             if let Err(e) = tokio::fs::remove_dir_all(&workspace_path).await {
                 let mut states = self.states.lock().await;
-                states[0].logs.push(format!("Warning: Could not clear workspace: {}. Try closing open files.", e));
+                states[0].logs.push(format!(
+                    "Warning: Could not clear workspace: {}. Try closing open files.",
+                    e
+                ));
             }
         }
-        
+
         // Ensure target directory exists
         let _ = tokio::fs::create_dir_all("target").await;
 
         let mut child = match Command::new("git")
-            .args(["clone", "--depth", "1", "--branch", branch, repo, &format!("target/workspace_{}", self.build_id)])
+            .args([
+                "clone",
+                "--depth",
+                "1",
+                "--branch",
+                branch,
+                repo,
+                &format!("target/workspace_{}", self.build_id),
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn() {
-                Ok(c) => c,
-                Err(e) => {
-                    let mut states = self.states.lock().await;
-                    states[0].logs.push(format!("Failed to start git clone: {}. Is git installed?", e));
-                    states[0].status = JobStatus::Failed;
-                    return false;
-                }
-            };
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                let mut states = self.states.lock().await;
+                states[0].logs.push(format!(
+                    "Failed to start git clone: {}. Is git installed?",
+                    e
+                ));
+                states[0].status = JobStatus::Failed;
+                return false;
+            }
+        };
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        
+
         let out_handle = tokio::spawn({
             let _states_clone = self.states.clone();
             let self_clone = self.clone_for_spawn();
