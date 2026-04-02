@@ -73,8 +73,8 @@ async fn run_headless(
             let last_idx = *last_log_indices.get(&state.name).unwrap_or(&0);
 
             if last_idx < logs.len() {
-                for i in last_idx..logs.len() {
-                    println!("[{}] {}", state.name, logs[i]);
+                for log in logs.iter().skip(last_idx) {
+                    println!("[{}] {}", state.name, log);
                 }
                 last_log_indices.insert(state.name.clone(), logs.len());
             }
@@ -205,8 +205,8 @@ jobs:
         return run_headless(pipeline, user_env, secrets).await;
     }
 
-    let git_info = if pipeline.repository.is_some() {
-        format!("Remote: {}", pipeline.repository.as_ref().unwrap())
+    let git_info = if let Some(repo) = &pipeline.repository {
+        format!("Remote: {}", repo)
     } else {
         get_git_info()
     };

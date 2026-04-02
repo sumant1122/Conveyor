@@ -32,7 +32,7 @@ pub enum AppView {
 }
 
 impl AppView {
-    pub fn to_index(&self) -> usize {
+    pub fn to_index(self) -> usize {
         match self {
             AppView::Dashboard => 0,
             AppView::History => 1,
@@ -52,6 +52,7 @@ impl AppView {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
     states: &[JobState],
@@ -144,14 +145,8 @@ fn draw_credentials_prompt(frame: &mut Frame, area: Rect, secret_name: &str, buf
     let masked_input: String = "*".repeat(buffer.len());
 
     let content = vec![
-        Line::from(vec![Span::styled(
-            format!("Missing required secret: "),
-            Style::default().fg(CLR_FG),
-        )]),
-        Line::from(vec![Span::styled(
-            secret_name,
-            Style::default().bold().fg(CLR_CYAN),
-        )]),
+        Line::from(vec![Span::styled("Missing required secret: ".to_string(), Style::default().fg(CLR_FG))]),
+        Line::from(vec![Span::styled(secret_name, Style::default().bold().fg(CLR_CYAN))]),
         Line::from(""),
         Line::from(vec![
             Span::styled("Value: ", Style::default().fg(CLR_GRAY)),

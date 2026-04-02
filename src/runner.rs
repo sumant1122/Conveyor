@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if)]
 use crate::pipeline::{Job, Pipeline, Step};
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
@@ -65,10 +66,8 @@ impl HistoryManager {
         if let Ok(entries) = std::fs::read_dir(&self.root) {
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
-                    if name.starts_with("build_") {
-                        if let Ok(id) = name[6..].parse::<u32>() {
-                            max_id = max_id.max(id);
-                        }
+                    if let Some(id) = name.strip_prefix("build_").and_then(|s| s.parse::<u32>().ok()) {
+                        max_id = max_id.max(id);
                     }
                 }
             }
@@ -178,7 +177,7 @@ impl Runner {
 
         let mut mask_values = secrets.values().cloned().collect::<Vec<_>>();
         mask_values.retain(|v| !v.is_empty() && v.len() > 3);
-        mask_values.sort_by(|a, b| b.len().cmp(&a.len()));
+        mask_values.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
         Self {
             pipeline: Arc::new(Mutex::new(pipeline)),
