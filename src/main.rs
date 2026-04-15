@@ -49,7 +49,12 @@ async fn run_headless(
 ) -> anyhow::Result<()> {
     use crate::runner::JobStatus;
 
-    let runner = Arc::new(Runner::new(pipeline.clone(), user_env, secrets, pipeline.repository.is_some()));
+    let runner = Arc::new(Runner::new(
+        pipeline.clone(),
+        user_env,
+        secrets,
+        pipeline.repository.is_some(),
+    ));
     println!("🚀 Starting Conveyor in headless mode...");
     println!("📋 Pipeline: {}", runner.pipeline.lock().await.name);
     println!("-------------------------------------------");
