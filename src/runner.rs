@@ -124,6 +124,7 @@ pub struct Runner {
     pub history: HistoryManager,
     pub build_id: u32,
     pub cancel_token: CancellationToken,
+    pub is_remote: bool,
 }
 
 impl Runner {
@@ -131,6 +132,7 @@ impl Runner {
         pipeline: Pipeline,
         user_env: std::collections::HashMap<String, String>,
         secrets: std::collections::HashMap<String, String>,
+        is_remote: bool,
     ) -> Self {
         let history = HistoryManager::new();
         let build_id = history.get_next_id();
@@ -192,6 +194,7 @@ impl Runner {
             history,
             build_id,
             cancel_token,
+            is_remote,
         }
     }
 
@@ -208,6 +211,7 @@ impl Runner {
             },
             build_id: self.build_id,
             cancel_token: self.cancel_token.clone(),
+            is_remote: self.is_remote,
         }
     }
 
@@ -635,7 +639,40 @@ impl Runner {
             cmd.envs(env);
         }
         cmd.envs(&self.user_env);
-        cmd.envs(&self.secrets);
+
+        if self.is_remote {
+            let mut requested_secrets = std::collections::HashSet::new();
+            if let Some(s) = &job.secrets {
+                for secret_name in s {
+                    requested_secrets.insert(secret_name.clone());
+                }
+            }
+            if let Some(s) = &step.secrets {
+                for secret_name in s {
+                    requested_secrets.insert(secret_name.clone());
+                }
+            }
+
+            if !requested_secrets.is_empty() {
+                {
+                    let mut states = self.states.lock().await;
+                    states[index].logs.push(
+                        format!("⚠️  Warning: This remote pipeline is requesting access to the following secrets: {:?}", requested_secrets)
+                            .bold()
+                            .yellow()
+                            .to_string(),
+                    );
+                }
+
+                for secret_name in requested_secrets {
+                    if let Some(value) = self.secrets.get(&secret_name) {
+                        cmd.env(secret_name, value);
+                    }
+                }
+            }
+        } else {
+            cmd.envs(&self.secrets);
+        }
 
         let mut child = match cmd.spawn() {
             Ok(c) => c,

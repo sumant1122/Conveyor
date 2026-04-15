@@ -25,6 +25,7 @@ pub struct Stage {
 pub struct Job {
     pub name: String,
     pub env: Option<HashMap<String, String>>,
+    pub secrets: Option<Vec<String>>,
     pub needs: Option<Vec<String>>,
     pub parallel: Option<bool>,
     pub steps: Vec<Step>,
@@ -33,6 +34,7 @@ pub struct Job {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Step {
     pub name: String,
+    pub secrets: Option<Vec<String>>,
     pub command: String,
 }
 
