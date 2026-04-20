@@ -629,7 +629,10 @@ impl Runner {
             None => return,
         };
 
-        let artifact_root = self.history.root.join(format!("build_{}/artifacts/{}", self.build_id, job_name));
+        let artifact_root = self
+            .history
+            .root
+            .join(format!("build_{}/artifacts/{}", self.build_id, job_name));
         let _ = tokio::fs::create_dir_all(&artifact_root).await;
 
         for art_path in artifacts {
@@ -643,36 +646,57 @@ impl Runner {
 
                 {
                     let mut states = self.states.lock().await;
-                    states[index].logs.push(format!("📦 Collecting artifact: {}", art_path).dim().to_string());
+                    states[index].logs.push(
+                        format!("📦 Collecting artifact: {}", art_path)
+                            .dim()
+                            .to_string(),
+                    );
                 }
 
                 if src.is_file() {
                     if let Err(e) = tokio::fs::copy(&src, &dest).await {
                         let mut states = self.states.lock().await;
-                        states[index].logs.push(format!("❌ Failed to copy artifact {}: {}", art_path, e).red().to_string());
+                        states[index].logs.push(
+                            format!("❌ Failed to copy artifact {}: {}", art_path, e)
+                                .red()
+                                .to_string(),
+                        );
                     }
                 } else if src.is_dir() {
                     // For directories, we'll do a simple recursive copy or just log it's not supported for now if we want to be strict "Exact Paths"
                     // But usually people mean the folder too. Let's do a simple recursive copy logic.
                     if let Err(e) = self.copy_dir_recursive(&src, &dest).await {
                         let mut states = self.states.lock().await;
-                        states[index].logs.push(format!("❌ Failed to copy artifact directory {}: {}", art_path, e).red().to_string());
+                        states[index].logs.push(
+                            format!("❌ Failed to copy artifact directory {}: {}", art_path, e)
+                                .red()
+                                .to_string(),
+                        );
                     }
                 }
             } else {
                 let mut states = self.states.lock().await;
-                states[index].logs.push(format!("⚠️  Artifact not found: {}", art_path).yellow().to_string());
+                states[index].logs.push(
+                    format!("⚠️  Artifact not found: {}", art_path)
+                        .yellow()
+                        .to_string(),
+                );
             }
         }
     }
 
-    async fn copy_dir_recursive(&self, src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    async fn copy_dir_recursive(
+        &self,
+        src: &std::path::Path,
+        dst: &std::path::Path,
+    ) -> std::io::Result<()> {
         tokio::fs::create_dir_all(&dst).await?;
         let mut entries = tokio::fs::read_dir(src).await?;
         while let Some(entry) = entries.next_entry().await? {
             let file_type = entry.file_type().await?;
             if file_type.is_dir() {
-                Box::pin(self.copy_dir_recursive(&entry.path(), &dst.join(entry.file_name()))).await?;
+                Box::pin(self.copy_dir_recursive(&entry.path(), &dst.join(entry.file_name())))
+                    .await?;
             } else {
                 tokio::fs::copy(entry.path(), dst.join(entry.file_name())).await?;
             }

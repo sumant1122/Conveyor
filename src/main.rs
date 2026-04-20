@@ -285,7 +285,7 @@ jobs:
                         r_clone.reset().await;
                         r_clone.run().await;
                     });
-                    
+
                     if let Some(schedule_str) = &pipeline.schedule {
                         if let Ok(schedule) = schedule_str.parse::<cron::Schedule>() {
                             next_run = schedule.upcoming(chrono::Local).next();

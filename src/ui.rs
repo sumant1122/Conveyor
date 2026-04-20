@@ -221,14 +221,22 @@ fn draw_header(
     let title = if is_viewing_history {
         format!(" CONVEYOR ⟫ HISTORICAL #{} ", build_id)
     } else {
-        format!(" CONVEYOR ⟫ {} #{} ", pipeline_name.to_uppercase(), build_id)
+        format!(
+            " CONVEYOR ⟫ {} #{} ",
+            pipeline_name.to_uppercase(),
+            build_id
+        )
     };
 
     frame.render_widget(
         Paragraph::new(title)
             .bold()
             .fg(CLR_BG)
-            .bg(if is_viewing_history { CLR_PURPLE } else { CLR_CYAN }),
+            .bg(if is_viewing_history {
+                CLR_PURPLE
+            } else {
+                CLR_CYAN
+            }),
         chunks[0],
     );
 
@@ -365,13 +373,13 @@ fn draw_dashboard(
         } else if !search_query.is_empty() {
             let mut highlighted_lines = Vec::new();
             let query_lower = search_query.to_lowercase();
-            
+
             for line in &state.logs {
                 if line.to_lowercase().contains(&query_lower) {
                     let mut spans = Vec::new();
                     let mut last_pos = 0;
                     let line_lower = line.to_lowercase();
-                    
+
                     for (index, _) in line_lower.match_indices(&query_lower) {
                         // Text before match
                         if index > last_pos {
@@ -385,20 +393,24 @@ fn draw_dashboard(
                         ));
                         last_pos = end;
                     }
-                    
+
                     // Remaining text
                     if last_pos < line.len() {
                         spans.push(Span::from(&line[last_pos..]));
                     }
-                    
+
                     highlighted_lines.push(Line::from(spans));
                 }
             }
-            
+
             let count = highlighted_lines.len();
             if count == 0 {
                 (
-                    ratatui::text::Text::from(format!("Pattern '{}' not found in logs.", search_query).italic().fg(CLR_YELLOW)),
+                    ratatui::text::Text::from(
+                        format!("Pattern '{}' not found in logs.", search_query)
+                            .italic()
+                            .fg(CLR_YELLOW),
+                    ),
                     0,
                 )
             } else {
@@ -409,7 +421,10 @@ fn draw_dashboard(
             (ratatui::text::Text::from(lines), state.logs.len())
         }
     } else {
-        (ratatui::text::Text::from("Select a task from the sidebar."), 0)
+        (
+            ratatui::text::Text::from("Select a task from the sidebar."),
+            0,
+        )
     };
 
     let log_title = if let Some(state) = states.get(selected_job) {
@@ -643,7 +658,10 @@ fn draw_footer(
 
     // Contextual Help
     if is_viewing_history {
-        spans.push(Span::styled(" [Esc] Back to List ", Style::default().fg(CLR_BLUE)));
+        spans.push(Span::styled(
+            " [Esc] Back to List ",
+            Style::default().fg(CLR_BLUE),
+        ));
         spans.push(Span::styled(" [↑↓] Job ", Style::default().fg(CLR_YELLOW)));
     } else {
         spans.push(Span::styled(" [1-4] View ", Style::default().fg(CLR_BLUE)));
@@ -651,7 +669,7 @@ fn draw_footer(
         spans.push(Span::styled(" [/] Find ", Style::default().fg(CLR_CYAN)));
         spans.push(Span::styled(" [R] Retry ", Style::default().fg(CLR_GREEN)));
     }
-    
+
     if area.width > 100 {
         spans.push(Span::styled(
             " [PgUp/Dn] Log ",
