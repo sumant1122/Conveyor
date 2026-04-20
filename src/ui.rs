@@ -190,6 +190,7 @@ fn draw_credentials_prompt(frame: &mut Frame, area: Rect, secret_name: &str, buf
     frame.render_widget(paragraph, inner_chunks[1]);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_header(
     frame: &mut Frame,
     area: Rect,

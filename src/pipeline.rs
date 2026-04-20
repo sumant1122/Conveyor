@@ -154,16 +154,17 @@ impl Pipeline {
             visited.insert(job_name.to_string());
             stack.insert(job_name.to_string());
 
-            if let Some(job) = jobs_map.get(&job_name.to_string()) {
-                if let Some(needs) = &job.needs {
-                    for need in needs {
-                        if !visited.contains(need) {
-                            if has_cycle(need, jobs_map, visited, stack) {
-                                return true;
-                            }
-                        } else if stack.contains(need) {
+            if let Some(needs) = jobs_map
+                .get(&job_name.to_string())
+                .and_then(|j| j.needs.as_ref())
+            {
+                for need in needs {
+                    if !visited.contains(need) {
+                        if has_cycle(need, jobs_map, visited, stack) {
                             return true;
                         }
+                    } else if stack.contains(need) {
+                        return true;
                     }
                 }
             }
@@ -174,10 +175,10 @@ impl Pipeline {
 
         let jobs_map: std::collections::HashMap<_, _> = jobs.iter().map(|j| (&j.name, j)).collect();
         for job in &jobs {
-            if !visited.contains(&job.name) {
-                if has_cycle(&job.name, &jobs_map, &mut visited, &mut stack) {
-                    anyhow::bail!("Cyclic dependency detected in pipeline");
-                }
+            if !visited.contains(&job.name)
+                && has_cycle(&job.name, &jobs_map, &mut visited, &mut stack)
+            {
+                anyhow::bail!("Cyclic dependency detected in pipeline");
             }
         }
 

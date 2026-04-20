@@ -259,10 +259,12 @@ jobs:
 
     // Cron state
     let mut next_run: Option<chrono::DateTime<chrono::Local>> = None;
-    if let Some(schedule_str) = &pipeline.schedule {
-        if let Ok(schedule) = schedule_str.parse::<cron::Schedule>() {
-            next_run = schedule.upcoming(chrono::Local).next();
-        }
+    if let Some(schedule) = pipeline
+        .schedule
+        .as_ref()
+        .and_then(|s| s.parse::<cron::Schedule>().ok())
+    {
+        next_run = schedule.upcoming(chrono::Local).next();
     }
 
     let tick_rate = Duration::from_millis(100);
@@ -276,26 +278,29 @@ jobs:
 
     loop {
         // Check cron trigger
-        if let Some(time) = next_run {
-            if chrono::Local::now() >= time {
-                if let Some(r) = &runner {
-                    r.cancel_token.cancel();
-                    let r_clone = r.clone();
-                    tokio::spawn(async move {
-                        r_clone.reset().await;
-                        r_clone.run().await;
-                    });
+        if let Some(r) = next_run
+            .filter(|&time| chrono::Local::now() >= time)
+            .and(runner.as_ref())
+        {
+            r.cancel_token.cancel();
+            let r_clone = r.clone();
+            let pipeline_clone = pipeline.clone();
+            tokio::spawn(async move {
+                r_clone.reset().await;
+                r_clone.run().await;
+            });
 
-                    if let Some(schedule_str) = &pipeline.schedule {
-                        if let Ok(schedule) = schedule_str.parse::<cron::Schedule>() {
-                            next_run = schedule.upcoming(chrono::Local).next();
-                        }
-                    }
-                }
+            if let Some(schedule) = pipeline_clone
+                .schedule
+                .as_ref()
+                .and_then(|s| s.parse::<cron::Schedule>().ok())
+            {
+                next_run = schedule.upcoming(chrono::Local).next();
             }
         }
 
         let mut current_build_id = 0;
+
         let history_records = if current_view == AppView::History {
             if let Some(r) = &runner {
                 r.history.load_history()
@@ -549,12 +554,13 @@ jobs:
                             }
                         }
                         KeyCode::Enter if current_view == AppView::History => {
-                            if let Some(i) = history_table_state.selected() {
-                                if let Some(record) = history_records.get(i) {
-                                    viewing_history = Some(record.clone());
-                                    selected_job = 0;
-                                    log_scroll = 0;
-                                }
+                            if let Some(record) = history_table_state
+                                .selected()
+                                .and_then(|i| history_records.get(i))
+                            {
+                                viewing_history = Some(record.clone());
+                                selected_job = 0;
+                                log_scroll = 0;
                             }
                         }
                         KeyCode::Esc => {
