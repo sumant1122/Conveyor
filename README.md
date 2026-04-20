@@ -38,6 +38,66 @@ cargo run
 cargo run -- -f my-pipeline.yaml
 ```
 
+## Pipeline Examples
+
+### 1. Simple Build & Test
+A minimal pipeline for a standard Rust project.
+```yaml
+jobs:
+  - name: Build
+    command: cargo build --release
+  - name: Test
+    command: cargo test
+```
+
+### 2. Parallel Multi-Language Pipeline
+Run independent tasks (e.g., frontend and backend checks) concurrently.
+```yaml
+jobs:
+  - name: Backend Test
+    command: cargo test
+  - name: Frontend Test
+    parallel: true
+    command: npm test
+```
+
+### 3. Complex DAG (Dependency Graph)
+Define exactly which jobs must finish before others start.
+```yaml
+stages:
+  - name: Setup
+    jobs:
+      - name: Install
+        command: npm install
+  - name: Quality
+    jobs:
+      - name: Lint
+        needs: ["Install"]
+        command: npm run lint
+      - name: Unit Tests
+        needs: ["Install"]
+        command: npm test
+  - name: Deploy
+    jobs:
+      - name: Publish
+        needs: ["Lint", "Unit Tests"]
+        command: npm publish
+```
+
+### 4. Artifact Collection
+Capture build outputs for later retrieval.
+```yaml
+jobs:
+  - name: Build Binary
+    command: cargo build --release
+    artifacts:
+      - "target/release/conveyor"
+  - name: Generate Docs
+    command: cargo doc
+    artifacts:
+      - "target/doc/"
+```
+
 ## Documentation
 For detailed information on configuration, navigation, and advanced features, see **[documentation.md](./documentation.md)**.
 
