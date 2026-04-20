@@ -20,3 +20,4 @@ serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1.50.0", features = ["full"] }
 tokio-util = "0.7.18"
+cron = "0.12"

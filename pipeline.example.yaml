@@ -1,6 +1,7 @@
 name: Production Delivery Pipeline
 repository: https://github.com/example/my-project.git
 branch: main
+schedule: "0 0 * * * *" # Daily at midnight
 concurrency: 2 # Limit parallel jobs to prevent resource exhaustion
 
 # Global environment variables
@@ -14,22 +15,21 @@ on_failure: "echo 'Pipeline failed. Check logs for details.'"
 
 jobs:
   - name: Build
-    steps:
-      - name: Compile Code
-        command: cargo build --release
+    command: cargo build --release
+    artifacts:
+      - "target/release/app-binary"
 
   - name: Test
     # Sequential by default: runs after 'Build'
     steps:
-      - name: Run Unit Tests
-        command: cargo test
+      - cargo test
+    artifacts:
+      - "target/test-reports/"
 
   - name: Lint
     # Explicit Parallel: Runs immediately along with Build/Test
     parallel: true
-    steps:
-      - name: Code Quality
-        command: cargo clippy
+    command: cargo clippy
 
   - name: Dockerize
     # DAG: specifically requires 'Test' to be finished

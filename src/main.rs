@@ -159,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
             name: "Remote Pipeline".to_string(),
             repository: Some(args[1].clone()),
             branch: args.get(2).cloned(),
+            schedule: None,
             env: None,
             secrets: None,
             on_success: None,
@@ -251,6 +252,19 @@ jobs:
     let mut search_query = String::new();
     let mut is_searching = false;
 
+    // History selection state
+    let mut history_table_state = ratatui::widgets::TableState::default();
+    history_table_state.select(Some(0));
+    let mut viewing_history: Option<crate::runner::BuildRecord> = None;
+
+    // Cron state
+    let mut next_run: Option<chrono::DateTime<chrono::Local>> = None;
+    if let Some(schedule_str) = &pipeline.schedule {
+        if let Ok(schedule) = schedule_str.parse::<cron::Schedule>() {
+            next_run = schedule.upcoming(chrono::Local).next();
+        }
+    }
+
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
 
@@ -261,6 +275,26 @@ jobs:
         std::collections::HashMap::new();
 
     loop {
+        // Check cron trigger
+        if let Some(time) = next_run {
+            if chrono::Local::now() >= time {
+                if let Some(r) = &runner {
+                    r.cancel_token.cancel();
+                    let r_clone = r.clone();
+                    tokio::spawn(async move {
+                        r_clone.reset().await;
+                        r_clone.run().await;
+                    });
+                    
+                    if let Some(schedule_str) = &pipeline.schedule {
+                        if let Ok(schedule) = schedule_str.parse::<cron::Schedule>() {
+                            next_run = schedule.upcoming(chrono::Local).next();
+                        }
+                    }
+                }
+            }
+        }
+
         let mut current_build_id = 0;
         let history_records = if current_view == AppView::History {
             if let Some(r) = &runner {
@@ -318,10 +352,22 @@ jobs:
             .get(current_missing_index)
             .map(|s| s.as_str());
 
+        let states_to_draw = if let Some(record) = &viewing_history {
+            &record.jobs
+        } else {
+            states_ref
+        };
+
+        let active_build_id = if let Some(record) = &viewing_history {
+            record.id
+        } else {
+            current_build_id
+        };
+
         terminal.draw(|f| {
             ui::draw(
                 f,
-                states_ref,
+                states_to_draw,
                 selected_job,
                 &current_git_info,
                 &p_name,
@@ -330,10 +376,13 @@ jobs:
                 &user_env_ui,
                 &mut log_scroll,
                 &search_query,
-                current_build_id,
+                active_build_id,
                 &history_records,
                 prompt_name,
                 &prompt_buffer,
+                &mut history_table_state,
+                viewing_history.is_some(),
+                next_run,
             )
         })?;
 
@@ -434,9 +483,14 @@ jobs:
                             is_searching = true;
                             search_query.clear();
                         }
-                        KeyCode::Esc => search_query.clear(),
-                        KeyCode::Char('1') => current_view = AppView::Dashboard,
-                        KeyCode::Char('2') => current_view = AppView::History,
+                        KeyCode::Char('1') => {
+                            current_view = AppView::Dashboard;
+                            viewing_history = None;
+                        }
+                        KeyCode::Char('2') => {
+                            current_view = AppView::History;
+                            viewing_history = None;
+                        }
                         KeyCode::Char('3') => current_view = AppView::Settings,
                         KeyCode::Char('4') => current_view = AppView::EnvVars,
                         KeyCode::Char('r') => {
@@ -449,18 +503,65 @@ jobs:
                                 });
                             }
                         }
-                        KeyCode::Up | KeyCode::Char('k') if current_view == AppView::Dashboard => {
-                            if selected_job > 0 {
-                                selected_job -= 1;
-                                log_scroll = 0;
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if current_view == AppView::Dashboard || viewing_history.is_some() {
+                                if selected_job > 0 {
+                                    selected_job -= 1;
+                                    log_scroll = 0;
+                                }
+                            } else if current_view == AppView::History {
+                                let i = match history_table_state.selected() {
+                                    Some(i) => {
+                                        if i > 0 {
+                                            i - 1
+                                        } else {
+                                            i
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                history_table_state.select(Some(i));
                             }
                         }
-                        KeyCode::Down | KeyCode::Char('j')
-                            if current_view == AppView::Dashboard =>
-                        {
-                            if selected_job < states_len.saturating_sub(1) {
-                                selected_job += 1;
-                                log_scroll = 0;
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if current_view == AppView::Dashboard || viewing_history.is_some() {
+                                let max = if let Some(h) = &viewing_history {
+                                    h.jobs.len()
+                                } else {
+                                    states_len
+                                };
+                                if selected_job < max.saturating_sub(1) {
+                                    selected_job += 1;
+                                    log_scroll = 0;
+                                }
+                            } else if current_view == AppView::History {
+                                let i = match history_table_state.selected() {
+                                    Some(i) => {
+                                        if i < history_records.len().saturating_sub(1) {
+                                            i + 1
+                                        } else {
+                                            i
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                history_table_state.select(Some(i));
+                            }
+                        }
+                        KeyCode::Enter if current_view == AppView::History => {
+                            if let Some(i) = history_table_state.selected() {
+                                if let Some(record) = history_records.get(i) {
+                                    viewing_history = Some(record.clone());
+                                    selected_job = 0;
+                                    log_scroll = 0;
+                                }
+                            }
+                        }
+                        KeyCode::Esc => {
+                            if viewing_history.is_some() {
+                                viewing_history = None;
+                            } else {
+                                search_query.clear();
                             }
                         }
                         KeyCode::PageUp => log_scroll = log_scroll.saturating_sub(15),

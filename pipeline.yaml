@@ -1,40 +1,8 @@
-name: Conveyor Build
-concurrency: 4  # Total parallel slots
-
-env:
-  GLOBAL_VAR: "global_value"
-
 jobs:
-  - name: Lint
-    # Sequential by default (runs first)
-    steps:
-      - name: Check
-        command: cargo clippy
-
   - name: Build
-    # Sequential default: Runs after 'Lint'
-    env:
-      BUILD_MODE: "release"
+    command: cargo build
+  - name: Test
     steps:
-      - name: Compile
-        command: cargo build
-
-  - name: Tests
-    # Sequential default: Runs after 'Build'
-    steps:
-      - name: Unit Tests
-        command: cargo test
-
-  - name: Integration
-    # Explicit Parallel: Runs as soon as slot is free
-    parallel: true
-    steps:
-      - name: Run
-        command: cargo test --test integration
-
-  - name: Deploy
-    # DAG: Specifically waits for BOTH test suites
-    needs: ["Tests", "Integration"]
-    steps:
-      - name: Finish
-        command: echo "All checks passed!"
+      - cargo test
+      - name: Lint
+        command: cargo clippy

@@ -3,6 +3,10 @@
 A lightweight, local-first CI/CD tool written in Rust with a modern, real-time Terminal User Interface (TUI).
 
 ## Features
+- **Artifact Management**: Define `artifacts` in your jobs. Conveyor will automatically collect and preserve these files (binaries, reports, etc.) in the build history.
+- **Interactive History**: Browse previous builds, view their statuses, and inspect full terminal logs directly from the history tab.
+- **Log Highlighting**: Real-time log search (`/`) not only filters lines but also highlights matching substrings for better visibility.
+- **Cron Scheduling**: Automate your pipelines with standard cron expressions (e.g., `schedule: "0 */6 * * *"`).
 - **Stages & Jobs**: Group related jobs into stages for better organization and a clearer overview of your pipeline's progress.
 - **Build History & Persistence**: Automatically saves build results and logs to a local history, allowing you to review past performance and failures.
 - **Sequential by Default**: Jobs run one-by-one in the order defined in your pipeline, ensuring a predictable flow.
@@ -49,48 +53,48 @@ cargo run -- https://github.com/user/repo.git my-feature-branch
 
 ### Navigation & Controls
 - **'1' / '2' / '3' / '4'**: Switch between **Dashboard**, **History**, **Pipeline Config**, and **Env Variables**.
-- **Up/Down Arrows**: Select a job in the Dashboard to view its logs.
+- **Up/Down Arrows**: 
+  - **Dashboard**: Select a job to view its logs.
+  - **History**: Select a previous build record.
+- **'Enter'**:
+  - **History**: View the full details and logs of the selected historical build.
+- **'Esc'**: 
+  - **History Detail**: Return to the build list.
+  - **Search**: Clear search query or exit search mode.
 - **'R'**: **Retry** the current pipeline (resets states and starts fresh).
-- **'/'**: Enter **Search Mode** to filter logs in real-time.
-- **'Esc'**: Exit search mode or clear the current search query.
+- **'/'**: Enter **Search Mode** to filter and **highlight** logs in real-time.
 - **'PgUp' / 'PgDn'**: Scroll through logs.
 - **'q'**: Quit the application.
 
 ## Pipeline Configuration (`pipeline.yaml`)
-Example `pipeline.yaml` using the modern **Stages** format:
+Example `pipeline.yaml` using modern features like **Stages**, **Cron**, and **Artifacts**, with **Simplified Syntax**:
 
 ```yaml
-name: Example Service
-on_success: "echo 'Success! Notifications sent.'"
-on_failure: "echo 'Build failed. Check history for details.'"
+# name: Example Service (Optional: Defaults to 'Conveyor Build')
+schedule: "0 */1 * * * *" # Run every minute
+on_success: "echo 'Success!'"
 
 stages:
   - name: Build
     jobs:
       - name: Compile
-        steps:
-          - name: Build binary
-            command: cargo build --release
+        command: cargo build --release
+        artifacts:
+          - "target/release/conveyor"
 
   - name: Test
     jobs:
       - name: Unit Tests
         steps:
-          - name: Run pytest
-            command: pytest
-      - name: Integration Tests
-        parallel: true
-        steps:
-          - name: Run integration
-            command: npm test
+          - cargo test # Shorthand for simple commands
+        artifacts:
+          - "target/debug/deps/"
 
   - name: Deploy
     jobs:
       - name: Push Image
-        needs: ["Unit Tests", "Integration Tests"]
-        steps:
-          - name: Docker Push
-            command: docker push my-app:latest
+        needs: ["Unit Tests"]
+        command: echo "Pushing..."
 ```
 
 *Note: The older flat `jobs:` format is still supported for backward compatibility.*
@@ -135,10 +139,9 @@ cargo run -- https://github.com/user/repo.git --headless
 ## Roadmap / Upcoming Enhancements
 To closely mirror the capabilities of professional CI systems like Jenkins, the following features are planned:
 
-- **📦 Artifact Management**: Capture and archive build outputs (binaries, test reports) for later retrieval directly from the TUI.
 - **🎛️ Input Parameters**: Support for "Build with Parameters," allowing users to select options (like environment or version) before a pipeline starts.
 - **🏗️ Distributed Agents**: The ability to delegate jobs to remote machines via SSH or a custom agent protocol.
-- **⏲️ Triggering System**: Background daemon mode to poll Git repositories or listen for Webhooks to trigger builds automatically.
+- **🐳 Container Isolation**: Run jobs inside Docker/Podman containers for clean, reproducible environments.
 
 ## License
 MIT
