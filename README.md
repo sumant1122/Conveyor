@@ -31,7 +31,11 @@ jobs:
 
 ### 3. Run
 ```bash
+# Run default pipeline.yaml
 cargo run
+
+# Run a custom file
+cargo run -- -f my-pipeline.yaml
 ```
 
 ## Documentation

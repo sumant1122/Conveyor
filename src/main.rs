@@ -132,6 +132,15 @@ async fn main() -> anyhow::Result<()> {
     let is_headless = args.iter().any(|a| a == "--headless");
     args.retain(|a| a != "--headless");
 
+    let mut custom_file = None;
+    if let Some(pos) = args.iter().position(|a| a == "-f" || a == "--file") {
+        if pos + 1 < args.len() {
+            custom_file = Some(args[pos + 1].clone());
+            args.remove(pos + 1);
+            args.remove(pos);
+        }
+    }
+
     // Load user environment variables
     let env_content = tokio::fs::read_to_string("env.yaml")
         .await
@@ -169,21 +178,22 @@ async fn main() -> anyhow::Result<()> {
             stages: None,
         }
     } else {
-        let content = tokio::fs::read_to_string("pipeline.yaml")
-            .await
-            .unwrap_or_else(|_| {
-                let default = r#"name: Conveyor Build
+        let path = custom_file.unwrap_or_else(|| "pipeline.yaml".to_string());
+        let content = if std::path::Path::new(&path).exists() {
+            tokio::fs::read_to_string(&path).await?
+        } else if path == "pipeline.yaml" {
+            let default = r#"name: Conveyor Build
 secrets:
   - SSH_KEY
 jobs:
   - name: Build
-    steps:
-      - name: Compile
-        command: cargo build
+    command: cargo build
 "#;
-                std::fs::write("pipeline.yaml", default).unwrap();
-                default.to_string()
-            });
+            std::fs::write("pipeline.yaml", default).unwrap();
+            default.to_string()
+        } else {
+            anyhow::bail!("Specified pipeline file '{}' not found", path);
+        };
         Pipeline::from_yaml(&content)?
     };
 

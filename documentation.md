@@ -118,20 +118,28 @@ secrets:
 
 ---
 
-## Headless Mode
+## Usage & Commands
 
+### Local Pipeline
+Run the default `pipeline.yaml` in the current directory:
+```bash
+cargo run
+```
+
+### Specify a Custom File
+Use the `-f` or `--file` flag to run a specific configuration:
+```bash
+cargo run -- -f my-pipeline.yaml
+```
+
+### Headless Mode
 For use in CI environments or by AI agents. Logs stream to `stdout` and the process exits with `0` (success) or `1` (failure).
-
 ```bash
 cargo run -- --headless
 ```
 
----
-
-## Remote Repositories
-
+### Remote Repositories
 Run a pipeline directly from a Git URL. Conveyor clones it into a unique temporary workspace.
-
 ```bash
 cargo run -- https://github.com/user/repo.git [optional-branch]
 ```
