@@ -133,12 +133,14 @@ async fn main() -> anyhow::Result<()> {
     args.retain(|a| a != "--headless");
 
     let mut custom_file = None;
-    if let Some(pos) = args.iter().position(|a| a == "-f" || a == "--file") {
-        if pos + 1 < args.len() {
-            custom_file = Some(args[pos + 1].clone());
-            args.remove(pos + 1);
-            args.remove(pos);
-        }
+    if let Some(pos) = args
+        .iter()
+        .position(|a| a == "-f" || a == "--file")
+        .filter(|&pos| pos + 1 < args.len())
+    {
+        custom_file = Some(args[pos + 1].clone());
+        args.remove(pos + 1);
+        args.remove(pos);
     }
 
     // Load user environment variables
