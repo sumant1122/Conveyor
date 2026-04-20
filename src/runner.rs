@@ -92,7 +92,7 @@ impl HistoryManager {
                 }
             }
         }
-        history.sort_by(|a, b| b.id.cmp(&a.id));
+        history.sort_by_key(|b| std::cmp::Reverse(b.id));
         history
     }
 }
